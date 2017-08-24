@@ -1,9 +1,9 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "rpcsendv2.h"
+#include "rpcsend_private.h"
 #include "rpcnetwork.h"
 #include "rpcserviceaddress.h"
-#include <vespa/messagebus/routing/routingnode.h>
 #include <vespa/messagebus/emptyreply.h>
 #include <vespa/messagebus/errorcode.h>
 #include <vespa/messagebus/tracelevel.h>
@@ -12,78 +12,29 @@
 
 using vespalib::make_string;
 
+namespace mbus {
+
+using network::internal::SendContext;
+using network::internal::ReplyContext;
+
 namespace {
 
-/**
- * Implements a helper class to hold the necessary context to create a reply from
- * an rpc return value. This object is held as the context of an FRT_RPCRequest.
- */
-class SendContext {
-private:
-    mbus::RoutingNode &_recipient;
-    mbus::Trace        _trace;
-    double             _timeout;
-
-public:
-    typedef std::unique_ptr<SendContext> UP;
-    SendContext(const SendContext &) = delete;
-    SendContext & operator = (const SendContext &) = delete;
-    SendContext(mbus::RoutingNode &recipient, uint64_t timeRemaining)
-        : _recipient(recipient),
-          _trace(recipient.getTrace().getLevel()),
-          _timeout(timeRemaining * 0.001) { }
-    mbus::RoutingNode &getRecipient() { return _recipient; }
-    mbus::Trace &getTrace() { return _trace; }
-    double getTimeout() { return _timeout; }
-};
-
-/**
- * Implements a helper class to hold the necessary context to send a reply as an
- * rpc return value. This object is held in the callstack of the reply.
- */
-class ReplyContext {
-private:
-    FRT_RPCRequest   &_request;
-    vespalib::Version _version;
-
-public:
-    typedef std::unique_ptr<ReplyContext> UP;
-    ReplyContext(const ReplyContext &) = delete;
-    ReplyContext & operator = (const ReplyContext &) = delete;
-
-    ReplyContext(FRT_RPCRequest &request, const vespalib::Version &version)
-        : _request(request), _version(version) { }
-    FRT_RPCRequest &getRequest() { return _request; }
-    const vespalib::Version &getVersion() { return _version; }
-};
+const char *METHOD_NAME   = "mbus.send1";
+const char *METHOD_PARAMS = "sssbilsxi";
+const char *METHOD_RETURN = "sdISSsxs";
 
 }
 
-namespace mbus {
-
-const char *RPCSendV2::METHOD_NAME   = "mbus.send1";
-const char *RPCSendV2::METHOD_PARAMS = "sssbilsxi";
-const char *RPCSendV2::METHOD_RETURN = "sdISSsxs";
-
-RPCSendV2::RPCSendV2() :
-    _net(NULL),
-    _clientIdent("client"),
-    _serverIdent("server")
-{ }
-
-RPCSendV2::~RPCSendV2() {}
+bool RPCSendV2::isCompatible(vespalib::stringref method, vespalib::stringref request, vespalib::stringref respons)
+{
+    return  (method == METHOD_NAME) &&
+            (request == METHOD_PARAMS) &&
+            (respons == METHOD_RETURN);
+}
 
 void
-RPCSendV2::attach(RPCNetwork &net)
+RPCSendV2::build(FRT_ReflectionBuilder & builder)
 {
-    _net = &net;
-    const string &prefix = _net->getIdentity().getServicePrefix();
-    if (!prefix.empty()) {
-        _clientIdent = make_string("'%s'", prefix.c_str());
-        _serverIdent = _clientIdent;
-    }
-
-    FRT_ReflectionBuilder builder(&_net->getSupervisor());
     builder.DefineMethod(METHOD_NAME, METHOD_PARAMS, METHOD_RETURN, true, FRT_METHOD(RPCSendV2::invoke), this);
     builder.MethodDesc("Send a message bus request and get a reply back.");
     builder.ParamDesc("version", "The version of the message.");
@@ -103,46 +54,6 @@ RPCSendV2::attach(RPCNetwork &net)
     builder.ReturnDesc("protocol", "The name of the protocol that knows how to decode this reply.");
     builder.ReturnDesc("payload", "The protocol specific reply payload.");
     builder.ReturnDesc("trace", "A string representation of the trace.");
-}
-
-namespace {
-
-class FillByCopy : public PayLoadFiller
-{
-public:
-    FillByCopy(BlobRef payload) : _payload(payload) { }
-    void fill(FRT_Values & v) const override {
-        v.AddData(_payload.data(), _payload.size());
-    }
-private:
-    BlobRef _payload;
-};
-
-class FillByHandover : public PayLoadFiller
-{
-public:
-    FillByHandover(Blob payload) : _payload(std::move(payload)) { }
-    void fill(FRT_Values & v) const override {
-        v.AddData(std::move(_payload.payload()), _payload.size());
-    }
-private:
-    mutable Blob _payload;
-};
-
-}
-
-void
-RPCSendV2::send(RoutingNode &recipient, const vespalib::Version &version,
-                BlobRef payload, uint64_t timeRemaining)
-{
-    send(recipient, version, FillByCopy(payload), timeRemaining);
-}
-
-void
-RPCSendV2::sendByHandover(RoutingNode &recipient, const vespalib::Version &version,
-                Blob payload, uint64_t timeRemaining)
-{
-    send(recipient, version, FillByHandover(std::move(payload)), timeRemaining);
 }
 
 void
@@ -361,10 +272,8 @@ RPCSendV2::handleReply(Reply::UP reply)
     FRT_StringValue *errorServices = ret.AddStringArray(errorCount);
     for (uint32_t i = 0; i < errorCount; ++i) {
         errorCodes[i] = reply->getError(i).getCode();
-        ret.SetString(errorMessages + i,
-                      reply->getError(i).getMessage().c_str());
-        ret.SetString(errorServices + i,
-                      reply->getError(i).getService().c_str());
+        ret.SetString(errorMessages + i, reply->getError(i).getMessage().c_str());
+        ret.SetString(errorServices + i, reply->getError(i).getService().c_str());
     }
 
     ret.AddString(reply->getProtocol().c_str());
@@ -377,25 +286,5 @@ RPCSendV2::handleReply(Reply::UP reply)
     req.Return();
 }
 
-void
-RPCSendV2::handleDiscard(Context ctx)
-{
-    ReplyContext::UP tmp(static_cast<ReplyContext*>(ctx.value.PTR));
-    FRT_RPCRequest &req = tmp->getRequest();
-    FNET_Channel *chn = req.GetContext()._value.CHANNEL;
-    req.SubRef();
-    chn->Free();
-}
-
-void
-RPCSendV2::replyError(FRT_RPCRequest *req, const vespalib::Version &version,
-                      uint32_t traceLevel, const Error &err)
-{
-    Reply::UP reply(new EmptyReply());
-    reply->setContext(Context(new ReplyContext(*req, version)));
-    reply->getTrace().setLevel(traceLevel);
-    reply->addError(err);
-    handleReply(std::move(reply));
-}
 
 } // namespace mbus

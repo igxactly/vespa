@@ -142,16 +142,13 @@ RPCNetwork::getTarget(const RPCServiceAddress &address)
 }
 
 void
-RPCNetwork::replyError(const SendContext &ctx, uint32_t errCode,
-                       const string &errMsg)
+RPCNetwork::replyError(const SendContext &ctx, uint32_t errCode, const string &errMsg)
 {
-    for (std::vector<RoutingNode*>::const_iterator it = ctx._recipients.begin();
-         it != ctx._recipients.end(); ++it)
-    {
+    for (RoutingNode * rnode : ctx._recipients) {
         Reply::UP reply(new EmptyReply());
         reply->setTrace(Trace(ctx._traceLevel));
         reply->addError(Error(errCode, errMsg));
-        _owner->deliverReply(std::move(reply), **it);
+        _owner->deliverReply(std::move(reply), *rnode);
     }
 }
 
@@ -199,11 +196,9 @@ RPCNetwork::getConnectionSpec() const
 RPCSendAdapter *
 RPCNetwork::getSendAdapter(const vespalib::Version &version)
 {
-    for (SendAdapterMap::iterator it = _sendAdapters.begin();
-         it != _sendAdapters.end(); ++it)
-    {
-        if (it->first.matches(version)) {
-            return it->second;
+    for (const auto & entry : _sendAdapters) {
+        if (entry.first.matches(version)) {
+            return entry.second;
         }
     }
     return NULL;

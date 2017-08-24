@@ -1,28 +1,14 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 #pragma once
 
-#include "rpcsendadapter.h"
-#include <vespa/messagebus/idiscardhandler.h>
-#include <vespa/messagebus/ireplyhandler.h>
-#include <vespa/messagebus/common.h>
-#include <vespa/fnet/frt/invokable.h>
-#include <vespa/fnet/frt/invoker.h>
+#include "rpcsendv1.h"
 
 namespace mbus {
-
-class Error;
-
-class PayLoadFiller
-{
-public:
-    virtual ~PayLoadFiller() { }
-    virtual void fill(FRT_Values & v) const = 0;
-};
 
 /**
  * Implements the send adapter for method "mbus.send".
  */
-class RPCSendV1 : public RPCSendAdapter,
+class RPCSendV2 : public RPCSendAdapter,
                   public FRT_Invokable,
                   public FRT_IRequestWait,
                   public IDiscardHandler,
@@ -59,8 +45,8 @@ public:
      * Constructs a new instance of this adapter. This object is unusable until
      * its attach() method has been called.
      */
-    RPCSendV1();
-    ~RPCSendV1();
+    RPCSendV2();
+    ~RPCSendV2();
 
     void attach(RPCNetwork &net) override;
 

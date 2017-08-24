@@ -8,6 +8,7 @@
 #include <vespa/documentapi/messagebus/messages/wrongdistributionreply.h>
 #include <vespa/storageapi/message/state.h>
 #include <vespa/messagebus/rpcmessagebus.h>
+#include <vespa/messagebus/network/rpcnetworkparams.h>
 #include <vespa/messagebus/emptyreply.h>
 #include <vespa/vespalib/stllike/asciistream.h>
 #include <vespa/vespalib/util/stringfmt.h>

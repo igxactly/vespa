@@ -1,6 +1,11 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
-#include "inetworkowner.h"
 #include "rpcnetwork.h"
+#include "rpcservicepool.h"
+#include "oosmanager.h"
+#include "rpcsendv1.h"
+#include "rpctargetpool.h"
+#include "rpcsendv2.h"
+#include "rpcnetworkparams.h"
 #include <vespa/messagebus/errorcode.h>
 #include <vespa/messagebus/iprotocol.h>
 #include <vespa/messagebus/tracelevel.h>
@@ -108,15 +113,15 @@ RPCNetwork::RPCNetwork(const RPCNetworkParams &params) :
     _transport(),
     _orb(&_transport, NULL),
     _scheduler(*_transport.GetScheduler()),
-    _targetPool(params.getConnectionExpireSecs()),
-    _targetPoolTask(_scheduler, _targetPool),
-    _servicePool(*this, 4096),
-    _slobrokCfgFactory(params.getSlobrokConfig()),
-    _mirror(std::make_unique<slobrok::api::MirrorAPI>(_orb, _slobrokCfgFactory)),
-    _regAPI(std::make_unique<slobrok::api::RegisterAPI>(_orb, _slobrokCfgFactory)),
-    _oosManager(_orb, *_mirror, params.getOOSServerPattern()),
+    _targetPool(std::make_unique<RPCTargetPool>(params.getConnectionExpireSecs())),
+    _targetPoolTask(_scheduler, *_targetPool),
+    _servicePool(std::make_unique<RPCServicePool>(*this, 4096)),
+    _slobrokCfgFactory(std::make_unique<slobrok::ConfiguratorFactory>(params.getSlobrokConfig())),
+    _mirror(std::make_unique<slobrok::api::MirrorAPI>(_orb, *_slobrokCfgFactory)),
+    _regAPI(std::make_unique<slobrok::api::RegisterAPI>(_orb, *_slobrokCfgFactory)),
+    _oosManager(std::make_unique<OOSManager>(_orb, *_mirror, params.getOOSServerPattern())),
     _requestedPort(params.getListenPort()),
-    _sendV1(),
+    _sendV1(std::make_unique<RPCSendV1>()),
     _sendAdapters()
 {
     _transport.SetDirectWrite(false);
@@ -138,7 +143,7 @@ RPCNetwork::allocRequest()
 RPCTarget::SP
 RPCNetwork::getTarget(const RPCServiceAddress &address)
 {
-    return _targetPool.getTarget(_orb, address);
+    return _targetPool->getTarget(_orb, address);
 }
 
 void
@@ -155,7 +160,7 @@ RPCNetwork::replyError(const SendContext &ctx, uint32_t errCode, const string &e
 void
 RPCNetwork::flushTargetPool()
 {
-    _targetPool.flushTargets(true);
+    _targetPool->flushTargets(true);
 }
 
 const vespalib::Version &
@@ -170,13 +175,12 @@ RPCNetwork::attach(INetworkOwner &owner)
     LOG_ASSERT(_owner == 0);
     _owner = &owner;
 
-    _sendV1.attach(*this);
-    _sendAdapters.insert(SendAdapterMap::value_type(vespalib::VersionSpecification(5), &_sendV1));
-    _sendAdapters.insert(SendAdapterMap::value_type(vespalib::VersionSpecification(6), &_sendV1));
+    _sendV1->attach(*this);
+    _sendAdapters.insert(SendAdapterMap::value_type(vespalib::VersionSpecification(5), _sendV1.get()));
+    _sendAdapters.insert(SendAdapterMap::value_type(vespalib::VersionSpecification(6), _sendV1.get()));
 
     FRT_ReflectionBuilder builder(&_orb);
-    builder.DefineMethod("mbus.getVersion", "", "s", true,
-                         FRT_METHOD(RPCNetwork::invoke), this);
+    builder.DefineMethod("mbus.getVersion", "", "s", true, FRT_METHOD(RPCNetwork::invoke), this);
     builder.MethodDesc("Retrieves the message bus version.");
     builder.ReturnDesc("version", "The message bus version.");
 }
@@ -222,13 +226,13 @@ bool
 RPCNetwork::waitUntilReady(double seconds) const
 {
     slobrok::api::SlobrokList brokerList;
-    slobrok::Configurator::UP configurator = _slobrokCfgFactory.create(brokerList);
+    slobrok::Configurator::UP configurator = _slobrokCfgFactory->create(brokerList);
     bool hasConfig = false;
     for (uint32_t i = 0; i < seconds * 100; ++i) {
         if (configurator->poll()) {
             hasConfig = true;
         }
-        if (_mirror->ready() && _oosManager.isReady()) {
+        if (_mirror->ready() && _oosManager->isReady()) {
             return true;
         }
         FastOS_Thread::Sleep(10);
@@ -239,7 +243,7 @@ RPCNetwork::waitUntilReady(double seconds) const
         std::string brokers = brokerList.logString();
         LOG(error, "mirror (of %s) failed to become ready in %d seconds",
             brokers.c_str(), (int)seconds);
-    } else if (! _oosManager.isReady()) {
+    } else if (! _oosManager->isReady()) {
         LOG(error, "OOS manager failed to become ready in %d seconds", (int)seconds);
     }
     return false;
@@ -288,24 +292,23 @@ RPCNetwork::allocServiceAddress(RoutingNode &recipient)
 Error
 RPCNetwork::resolveServiceAddress(RoutingNode &recipient, const string &serviceName)
 {
-    if (_oosManager.isOOS(serviceName)) {
+    if (_oosManager->isOOS(serviceName)) {
         return Error(ErrorCode::SERVICE_OOS,
                      make_string("The service '%s' has been marked as out of service.",
                                            serviceName.c_str()));
     }
-    RPCServiceAddress::UP ret = _servicePool.resolve(serviceName);
+    RPCServiceAddress::UP ret = _servicePool->resolve(serviceName);
     if (ret.get() == NULL) {
         return Error(ErrorCode::NO_ADDRESS_FOR_SERVICE,
                      make_string("The address of service '%s' could not be resolved. It is not currently "
-                                           "registered with the Vespa name server. "
-                                           "The service must be having problems, or the routing configuration is wrong.",
-                                           serviceName.c_str()));
+                                 "registered with the Vespa name server. "
+                                 "The service must be having problems, or the routing configuration is wrong.",
+                                 serviceName.c_str()));
     }
-    RPCTarget::SP target = _targetPool.getTarget(_orb, *ret);
+    RPCTarget::SP target = _targetPool->getTarget(_orb, *ret);
     if (target.get() == NULL) {
         return Error(ErrorCode::CONNECTION_ERROR,
-                     make_string("Failed to connect to service '%s'.",
-                                           serviceName.c_str()));
+                     make_string("Failed to connect to service '%s'.", serviceName.c_str()));
     }
     ret->setTarget(target); // free by freeServiceAddress()
     recipient.setServiceAddress(IServiceAddress::UP(ret.release()));

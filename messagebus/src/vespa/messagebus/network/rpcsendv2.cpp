@@ -1,6 +1,6 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
-#include "rpcsendv1.h"
+#include "rpcsendv2.h"
 #include "rpcnetwork.h"
 #include "rpcserviceaddress.h"
 #include <vespa/messagebus/routing/routingnode.h>
@@ -61,20 +61,20 @@ public:
 
 namespace mbus {
 
-const char *RPCSendV1::METHOD_NAME   = "mbus.send1";
-const char *RPCSendV1::METHOD_PARAMS = "sssbilsxi";
-const char *RPCSendV1::METHOD_RETURN = "sdISSsxs";
+const char *RPCSendV2::METHOD_NAME   = "mbus.send1";
+const char *RPCSendV2::METHOD_PARAMS = "sssbilsxi";
+const char *RPCSendV2::METHOD_RETURN = "sdISSsxs";
 
-RPCSendV1::RPCSendV1() :
+RPCSendV2::RPCSendV2() :
     _net(NULL),
     _clientIdent("client"),
     _serverIdent("server")
 { }
 
-RPCSendV1::~RPCSendV1() {}
+RPCSendV2::~RPCSendV2() {}
 
 void
-RPCSendV1::attach(RPCNetwork &net)
+RPCSendV2::attach(RPCNetwork &net)
 {
     _net = &net;
     const string &prefix = _net->getIdentity().getServicePrefix();
@@ -84,7 +84,7 @@ RPCSendV1::attach(RPCNetwork &net)
     }
 
     FRT_ReflectionBuilder builder(&_net->getSupervisor());
-    builder.DefineMethod(METHOD_NAME, METHOD_PARAMS, METHOD_RETURN, true, FRT_METHOD(RPCSendV1::invoke), this);
+    builder.DefineMethod(METHOD_NAME, METHOD_PARAMS, METHOD_RETURN, true, FRT_METHOD(RPCSendV2::invoke), this);
     builder.MethodDesc("Send a message bus request and get a reply back.");
     builder.ParamDesc("version", "The version of the message.");
     builder.ParamDesc("route", "Names of additional hops to visit.");
@@ -132,21 +132,21 @@ private:
 }
 
 void
-RPCSendV1::send(RoutingNode &recipient, const vespalib::Version &version,
+RPCSendV2::send(RoutingNode &recipient, const vespalib::Version &version,
                 BlobRef payload, uint64_t timeRemaining)
 {
     send(recipient, version, FillByCopy(payload), timeRemaining);
 }
 
 void
-RPCSendV1::sendByHandover(RoutingNode &recipient, const vespalib::Version &version,
+RPCSendV2::sendByHandover(RoutingNode &recipient, const vespalib::Version &version,
                 Blob payload, uint64_t timeRemaining)
 {
     send(recipient, version, FillByHandover(std::move(payload)), timeRemaining);
 }
 
 void
-RPCSendV1::send(RoutingNode &recipient, const vespalib::Version &version,
+RPCSendV2::send(RoutingNode &recipient, const vespalib::Version &version,
                 const PayLoadFiller & payload, uint64_t timeRemaining)
 {
     SendContext::UP ctx(new SendContext(recipient, timeRemaining));
@@ -192,7 +192,7 @@ RPCSendV1::send(RoutingNode &recipient, const vespalib::Version &version,
 }
 
 void
-RPCSendV1::RequestDone(FRT_RPCRequest *req)
+RPCSendV2::RequestDone(FRT_RPCRequest *req)
 {
     SendContext::UP ctx(static_cast<SendContext*>(req->GetContext()._value.VOIDP));
     const string &serviceName = static_cast<RPCServiceAddress&>(
@@ -278,7 +278,7 @@ RPCSendV1::RequestDone(FRT_RPCRequest *req)
 }
 
 void
-RPCSendV1::invoke(FRT_RPCRequest *req)
+RPCSendV2::invoke(FRT_RPCRequest *req)
 {
     req->Detach();
 
@@ -335,7 +335,7 @@ RPCSendV1::invoke(FRT_RPCRequest *req)
 }
 
 void
-RPCSendV1::handleReply(Reply::UP reply)
+RPCSendV2::handleReply(Reply::UP reply)
 {
     ReplyContext::UP ctx(static_cast<ReplyContext*>(reply->getContext().value.PTR));
     FRT_RPCRequest &req = ctx->getRequest();
@@ -378,7 +378,7 @@ RPCSendV1::handleReply(Reply::UP reply)
 }
 
 void
-RPCSendV1::handleDiscard(Context ctx)
+RPCSendV2::handleDiscard(Context ctx)
 {
     ReplyContext::UP tmp(static_cast<ReplyContext*>(ctx.value.PTR));
     FRT_RPCRequest &req = tmp->getRequest();
@@ -388,7 +388,7 @@ RPCSendV1::handleDiscard(Context ctx)
 }
 
 void
-RPCSendV1::replyError(FRT_RPCRequest *req, const vespalib::Version &version,
+RPCSendV2::replyError(FRT_RPCRequest *req, const vespalib::Version &version,
                       uint32_t traceLevel, const Error &err)
 {
     Reply::UP reply(new EmptyReply());

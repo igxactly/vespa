@@ -10,6 +10,7 @@
 #include <vespa/messagebus/routing/routingtable.h>
 #include <vespa/messagebus/routing/routedirective.h>
 #include <vespa/messagebus/rpcmessagebus.h>
+#include <vespa/messagebus/network/rpcsendv1.h>
 #include <vespa/slobrok/sbmirror.h>
 #include <vespa/config/common/exceptions.h>
 #include <vespa/config/helper/configgetter.hpp>

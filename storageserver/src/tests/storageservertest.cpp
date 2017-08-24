@@ -6,6 +6,7 @@
 #include <vespa/document/base/testdocman.h>
 #include <vespa/documentapi/documentapi.h>
 #include <vespa/messagebus/rpcmessagebus.h>
+#include <vespa/messagebus/network/rpcnetworkparams.h>
 #include <vespa/memfilepersistence/spi/memfilepersistenceprovider.h>
 #include <vespa/messagebus/staticthrottlepolicy.h>
 #include <vespa/messagebus/testlib/slobrok.h>

@@ -2,11 +2,9 @@
 #pragma once
 
 #include "inetwork.h"
-#include "oosmanager.h"
-#include "rpcnetworkparams.h"
-#include "rpcsendv1.h"
-#include "rpcservicepool.h"
-#include "rpctargetpool.h"
+#include "rpcsendadapter.h"
+#include "rpctarget.h"
+#include "identity.h"
 #include <vespa/messagebus/blob.h>
 #include <vespa/messagebus/blobref.h>
 #include <vespa/messagebus/message.h>
@@ -17,12 +15,18 @@
 #include <vespa/fnet/frt/supervisor.h>
 
 namespace slobrok {
-    namespace api {
-        class RegisterAPI;
-    }
+    namespace api { class RegisterAPI; }
+    class ConfiguratorFactory;
 }
 
 namespace mbus {
+
+class OOSManager;
+class RPCServicePool;
+class RPCTargetPool;
+class RPCNetworkParams;
+class RPCServiceAddress;
+
 /**
  * Network implementation based on RPC. This class is responsible for
  * keeping track of services and for sending messages to services.
@@ -59,15 +63,15 @@ private:
     FNET_Transport            _transport;
     FRT_Supervisor            _orb;
     FNET_Scheduler           &_scheduler;
-    RPCTargetPool             _targetPool;
+    std::unique_ptr<RPCTargetPool>                _targetPool;
     TargetPoolTask            _targetPoolTask;
-    RPCServicePool            _servicePool;
-    slobrok::ConfiguratorFactory                _slobrokCfgFactory;
-    std::unique_ptr<slobrok::api::IMirrorAPI>   _mirror;
-    std::unique_ptr<slobrok::api::RegisterAPI>  _regAPI;
-    OOSManager                _oosManager;
+    std::unique_ptr<RPCServicePool>               _servicePool;
+    std::unique_ptr<slobrok::ConfiguratorFactory> _slobrokCfgFactory;
+    std::unique_ptr<slobrok::api::IMirrorAPI>     _mirror;
+    std::unique_ptr<slobrok::api::RegisterAPI>    _regAPI;
+    std::unique_ptr<OOSManager>                   _oosManager;
     int                       _requestedPort;
-    RPCSendV1                 _sendV1;
+    std::unique_ptr<RPCSendAdapter> _sendV1;
     SendAdapterMap            _sendAdapters;
 
     /**
@@ -191,7 +195,7 @@ public:
      *
      * @return internal OOS manager
      **/
-    OOSManager &getOOSManager() { return _oosManager; }
+    OOSManager &getOOSManager() { return *_oosManager; }
 
     /**
      * Obtain a reference to the internal supervisor. This is used by

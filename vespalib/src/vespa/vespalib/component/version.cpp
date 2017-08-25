@@ -82,7 +82,7 @@ static int parseInteger(const stringref & input)
 }
 
 
-Version::Version(const string & versionString)
+Version::Version(const stringref & versionString)
     : _major(0),
       _minor(0),
       _micro(0),

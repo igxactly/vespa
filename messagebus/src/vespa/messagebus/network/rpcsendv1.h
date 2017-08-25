@@ -15,10 +15,10 @@ private:
     std::unique_ptr<Reply> createReply(const FRT_Values & response, const string & serviceName,
                                        Error & error, vespalib::TraceNode & rootTrace) const override;
     const char * getReturnSpec() const override;
+    void createResponse(FRT_Values & ret, const string & version, Reply & reply, Blob payload) const override;
+    std::unique_ptr<Params> toParams(const FRT_Values &param) const override;
 public:
     static bool isCompatible(vespalib::stringref method, vespalib::stringref request, vespalib::stringref respons);
-    void handleReply(std::unique_ptr<Reply> reply) override;
-    void invoke(FRT_RPCRequest *req);
 };
 
 } // namespace mbus

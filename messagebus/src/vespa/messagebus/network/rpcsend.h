@@ -32,7 +32,22 @@ class RPCSend : public RPCSendAdapter,
                 public FRT_Invokable,
                 public FRT_IRequestWait,
                 public IDiscardHandler,
-                public IReplyHandler {
+                public IReplyHandler
+{
+public:
+    class Params {
+    public:
+        virtual ~Params() {}
+        virtual vespalib::Version getVersion() const = 0;
+        virtual vespalib::stringref getProtocol() const = 0;
+        virtual uint32_t getTraceLevel() const = 0;
+        virtual bool useRetry() const = 0;
+        virtual uint32_t getRetries() const = 0;
+        virtual uint64_t getRemainingTime() const = 0;
+        virtual vespalib::stringref getRoute() const = 0;
+        virtual vespalib::stringref getSession() const = 0;
+        virtual BlobRef getPayload() const = 0;
+    };
 protected:
     RPCNetwork *_net;
     string _clientIdent;
@@ -45,6 +60,8 @@ protected:
                                const RPCServiceAddress & address, const Message & msg, uint32_t traceLevel,
                                const PayLoadFiller &filler, uint64_t timeRemaining) const = 0;
     virtual const char * getReturnSpec() const = 0;
+    virtual void createResponse(FRT_Values & ret, const string & version, Reply & reply, Blob payload) const = 0;
+    virtual std::unique_ptr<Params> toParams(const FRT_Values &param) const = 0;
 
     void send(RoutingNode &recipient, const vespalib::Version &version,
               const PayLoadFiller & filler, uint64_t timeRemaining);
@@ -60,14 +77,11 @@ protected:
      */
     void replyError(FRT_RPCRequest *req, const vespalib::Version &version, uint32_t traceLevel, const Error &err);
 public:
-
-    /**
-     * Constructs a new instance of this adapter. This object is unusable until
-     * its attach() method has been called.
-     */
     RPCSend();
     ~RPCSend();
 
+    void invoke(FRT_RPCRequest *req);
+private:
     void attach(RPCNetwork &net) final override;
     void handleDiscard(Context ctx) final override;
     void sendByHandover(RoutingNode &recipient, const vespalib::Version &version,
@@ -75,6 +89,7 @@ public:
     void send(RoutingNode &recipient, const vespalib::Version &version,
               BlobRef payload, uint64_t timeRemaining) final override;
     void RequestDone(FRT_RPCRequest *req) final override;
+    void handleReply(std::unique_ptr<Reply> reply) final override;
 };
 
 } // namespace mbus

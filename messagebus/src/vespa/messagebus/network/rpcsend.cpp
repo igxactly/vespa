@@ -93,15 +93,13 @@ RPCSend::handleDiscard(Context ctx)
 }
 
 void
-RPCSend::sendByHandover(RoutingNode &recipient, const vespalib::Version &version,
-                        Blob payload, uint64_t timeRemaining)
+RPCSend::sendByHandover(RoutingNode &recipient, const vespalib::Version &version, Blob payload, uint64_t timeRemaining)
 {
     send(recipient, version, FillByHandover(std::move(payload)), timeRemaining);
 }
 
 void
-RPCSend::send(RoutingNode &recipient, const vespalib::Version &version,
-                BlobRef payload, uint64_t timeRemaining)
+RPCSend::send(RoutingNode &recipient, const vespalib::Version &version, BlobRef payload, uint64_t timeRemaining)
 {
     send(recipient, version, FillByCopy(payload), timeRemaining);
 }
@@ -195,8 +193,7 @@ RPCSend::decode(vespalib::stringref protocolName, const vespalib::Version & vers
             if (routable->isReply()) {
                 reply.reset(static_cast<Reply*>(routable.release()));
             } else {
-                error = Error(ErrorCode::DECODE_ERROR,
-                              "Payload decoded to a message when expecting a reply.");
+                error = Error(ErrorCode::DECODE_ERROR, "Payload decoded to a message when expecting a reply.");
             }
         } else {
             error = Error(ErrorCode::DECODE_ERROR,
@@ -208,6 +205,75 @@ RPCSend::decode(vespalib::stringref protocolName, const vespalib::Version & vers
                       make_string("Protocol '%s' is not known by %s.", protocolName.c_str(), _serverIdent.c_str()));
     }
     return reply;
+}
+
+void
+RPCSend::handleReply(Reply::UP reply)
+{
+    ReplyContext::UP ctx(static_cast<ReplyContext*>(reply->getContext().value.PTR));
+    FRT_RPCRequest &req = ctx->getRequest();
+    string version = ctx->getVersion().toString();
+    if (reply->getTrace().shouldTrace(TraceLevel::SEND_RECEIVE)) {
+        reply->getTrace().trace(TraceLevel::SEND_RECEIVE, make_string("Sending reply (version %s) from %s.",
+                                                                      version.c_str(), _serverIdent.c_str()));
+    }
+    Blob payload(0);
+    if (reply->getType() != 0) {
+        payload = _net->getOwner().getProtocol(reply->getProtocol())->encode(ctx->getVersion(), *reply);
+        if (payload.size() == 0) {
+            reply->addError(Error(ErrorCode::ENCODE_ERROR, "An error occured while encoding the reply, see log."));
+        }
+    }
+    FRT_Values &ret = *req.GetReturn();
+    createResponse(ret, version, *reply, std::move(payload));
+    req.Return();
+}
+
+void
+RPCSend::invoke(FRT_RPCRequest *req)
+{
+    req->Detach();
+    FRT_Values &args = *req->GetParams();
+
+    std::unique_ptr<Params> params = toParams(args);
+    IProtocol * protocol = _net->getOwner().getProtocol(params->getProtocol());
+    if (protocol == nullptr) {
+        replyError(req, params->getVersion(), params->getTraceLevel(),
+                   Error(ErrorCode::UNKNOWN_PROTOCOL,
+                         make_string("Protocol '%s' is not known by %s.", params->getProtocol().c_str(), _serverIdent.c_str())));
+        return;
+    }
+    Routable::UP routable = protocol->decode(params->getVersion(), params->getPayload());
+    req->DiscardBlobs();
+    if ( ! routable ) {
+        replyError(req, params->getVersion(), params->getTraceLevel(),
+                   Error(ErrorCode::DECODE_ERROR,
+                         make_string("Protocol '%s' failed to decode routable.", params->getProtocol().c_str())));
+        return;
+    }
+    if (routable->isReply()) {
+        replyError(req, params->getVersion(), params->getTraceLevel(),
+                   Error(ErrorCode::DECODE_ERROR, "Payload decoded to a reply when expecting a mesage."));
+        return;
+    }
+    Message::UP msg(static_cast<Message*>(routable.release()));
+    vespalib::stringref route = params->getRoute();
+    if (!route.empty()) {
+        msg->setRoute(Route::parse(route));
+    }
+    msg->setContext(Context(new ReplyContext(*req, params->getVersion())));
+    msg->pushHandler(*this, *this);
+    msg->setRetryEnabled(params->useRetry());
+    msg->setRetry(params->getRetries());
+    msg->setTimeReceivedNow();
+    msg->setTimeRemaining(params->getRemainingTime());
+    msg->getTrace().setLevel(params->getTraceLevel());
+    if (msg->getTrace().shouldTrace(TraceLevel::SEND_RECEIVE)) {
+        msg->getTrace().trace(TraceLevel::SEND_RECEIVE,
+                              make_string("Message (type %d) received at %s for session '%s'.",
+                                          msg->getType(), _serverIdent.c_str(), params->getSession().c_str()));
+    }
+    _net->getOwner().deliverMessage(std::move(msg), params->getSession());
 }
 
 } // namespace mbus

@@ -1,11 +1,9 @@
 // Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 
 #include "rpcsendv2.h"
-#include "rpcsend_private.h"
 #include "rpcnetwork.h"
 #include "rpcserviceaddress.h"
 #include <vespa/messagebus/emptyreply.h>
-#include <vespa/messagebus/errorcode.h>
 #include <vespa/messagebus/tracelevel.h>
 #include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/vespalib/data/slime/slime.h>
@@ -14,9 +12,6 @@
 using vespalib::make_string;
 
 namespace mbus {
-
-using network::internal::SendContext;
-using network::internal::ReplyContext;
 
 namespace {
 
@@ -142,101 +137,67 @@ RPCSendV2::createReply(const FRT_Values & ret, const string & serviceName, Error
 }
 
 void
-RPCSendV2::invoke(FRT_RPCRequest *req)
+RPCSendV2::createResponse(FRT_Values & ret, const string & version, Reply & reply, Blob payload) const
 {
-    req->Detach();
-
-    FRT_Values &args = *req->GetParams();
-    vespalib::Version  version       = vespalib::Version(args[0]._string._str);
-    const char        *route         = args[1]._string._str;
-    const char        *session       = args[2]._string._str;
-    bool               retryEnabled  = args[3]._intval8 != 0;
-    uint32_t           retry         = args[4]._intval32;
-    uint64_t           timeRemaining = args[5]._intval64;
-    const char        *protocolName  = args[6]._string._str;
-    const char        *payload       = args[7]._data._buf;
-    uint32_t           payloadLen    = args[7]._data._len;
-    uint32_t           traceLevel    = args[8]._intval32;
-
-    IProtocol * protocol = _net->getOwner().getProtocol(protocolName);
-    if (protocol == nullptr) {
-        replyError(req, version, traceLevel,
-                   Error(ErrorCode::UNKNOWN_PROTOCOL,
-                         make_string("Protocol '%s' is not known by %s.", protocolName, _serverIdent.c_str())));
-        return;
-    }
-    Routable::UP routable = protocol->decode(version, BlobRef(payload, payloadLen));
-    req->DiscardBlobs();
-    if ( ! routable ) {
-        replyError(req, version, traceLevel,
-                   Error(ErrorCode::DECODE_ERROR,
-                         make_string("Protocol '%s' failed to decode routable.", protocolName)));
-        return;
-    }
-    if (routable->isReply()) {
-        replyError(req, version, traceLevel,
-                   Error(ErrorCode::DECODE_ERROR,
-                         "Payload decoded to a reply when expecting a mesage."));
-        return;
-    }
-    Message::UP msg(static_cast<Message*>(routable.release()));
-    if (strlen(route) > 0) {
-        msg->setRoute(Route::parse(route));
-    }
-    msg->setContext(Context(new ReplyContext(*req, version)));
-    msg->pushHandler(*this, *this);
-    msg->setRetryEnabled(retryEnabled);
-    msg->setRetry(retry);
-    msg->setTimeReceivedNow();
-    msg->setTimeRemaining(timeRemaining);
-    msg->getTrace().setLevel(traceLevel);
-    if (msg->getTrace().shouldTrace(TraceLevel::SEND_RECEIVE)) {
-        msg->getTrace().trace(TraceLevel::SEND_RECEIVE,
-                              make_string("Message (type %d) received at %s for session '%s'.",
-                                          msg->getType(), _serverIdent.c_str(), session));
-    }
-    _net->getOwner().deliverMessage(std::move(msg), session);
-}
-
-void
-RPCSendV2::handleReply(Reply::UP reply)
-{
-    ReplyContext::UP ctx(static_cast<ReplyContext*>(reply->getContext().value.PTR));
-    FRT_RPCRequest &req = ctx->getRequest();
-    string version = ctx->getVersion().toString();
-    if (reply->getTrace().shouldTrace(TraceLevel::SEND_RECEIVE)) {
-        reply->getTrace().trace(TraceLevel::SEND_RECEIVE, make_string("Sending reply (version %s) from %s.",
-                                                                      version.c_str(), _serverIdent.c_str()));
-    }
-    Blob payload(0);
-    if (reply->getType() != 0) {
-        payload = _net->getOwner().getProtocol(reply->getProtocol())->encode(ctx->getVersion(), *reply);
-        if (payload.size() == 0) {
-            reply->addError(Error(ErrorCode::ENCODE_ERROR, "An error occured while encoding the reply, see log."));
-        }
-    }
-    FRT_Values &ret = *req.GetReturn();
     ret.AddString(version.c_str());
-    ret.AddDouble(reply->getRetryDelay());
+    ret.AddDouble(reply.getRetryDelay());
 
-    uint32_t         errorCount    = reply->getNumErrors();
+    uint32_t         errorCount    = reply.getNumErrors();
     uint32_t        *errorCodes    = ret.AddInt32Array(errorCount);
     FRT_StringValue *errorMessages = ret.AddStringArray(errorCount);
     FRT_StringValue *errorServices = ret.AddStringArray(errorCount);
     for (uint32_t i = 0; i < errorCount; ++i) {
-        errorCodes[i] = reply->getError(i).getCode();
-        ret.SetString(errorMessages + i, reply->getError(i).getMessage().c_str());
-        ret.SetString(errorServices + i, reply->getError(i).getService().c_str());
+        errorCodes[i] = reply.getError(i).getCode();
+        ret.SetString(errorMessages + i, reply.getError(i).getMessage().c_str());
+        ret.SetString(errorServices + i, reply.getError(i).getService().c_str());
     }
 
-    ret.AddString(reply->getProtocol().c_str());
+    ret.AddString(reply.getProtocol().c_str());
     ret.AddData(std::move(payload.payload()), payload.size());
-    if (reply->getTrace().getLevel() > 0) {
-        ret.AddString(reply->getTrace().getRoot().encode().c_str());
+    if (reply.getTrace().getLevel() > 0) {
+        ret.AddString(reply.getTrace().getRoot().encode().c_str());
     } else {
         ret.AddString("");
     }
-    req.Return();
+}
+
+namespace {
+
+class ParamsV2 : public RPCSend::Params
+{
+public:
+    ParamsV2(const FRT_Values &args) : _args(args) { }
+
+    uint32_t getTraceLevel() const override { return _args[8]._intval32; }
+    bool useRetry() const override { return _args[3]._intval8 != 0; }
+    uint32_t getRetries() const override { return _args[4]._intval32; }
+    uint64_t getRemainingTime() const override { return _args[5]._intval64; }
+
+    vespalib::Version getVersion() const override {
+        return vespalib::Version(vespalib::stringref(_args[0]._string._str, _args[0]._string._len));
+    }
+    vespalib::stringref getRoute() const override {
+        return vespalib::stringref(_args[1]._string._str, _args[1]._string._len);
+    }
+    vespalib::stringref getSession() const override {
+        return vespalib::stringref(_args[2]._string._str, _args[2]._string._len);
+    }
+    vespalib::stringref getProtocol() const override {
+        return vespalib::stringref(_args[6]._string._str, _args[6]._string._len);
+    }
+    BlobRef getPayload() const override {
+        return BlobRef(_args[7]._data._buf, _args[7]._data._len);
+    }
+private:
+    const FRT_Values & _args;
+};
+
+}
+
+std::unique_ptr<RPCSend::Params>
+RPCSendV2::toParams(const FRT_Values &args) const
+{
+    return std::make_unique<ParamsV2>(args);
 }
 
 } // namespace mbus

@@ -3,8 +3,8 @@
 #include "rpcservicepool.h"
 #include "oosmanager.h"
 #include "rpcsendv1.h"
-#include "rpctargetpool.h"
 #include "rpcsendv2.h"
+#include "rpctargetpool.h"
 #include "rpcnetworkparams.h"
 #include <vespa/messagebus/errorcode.h>
 #include <vespa/messagebus/iprotocol.h>
@@ -122,6 +122,7 @@ RPCNetwork::RPCNetwork(const RPCNetworkParams &params) :
     _oosManager(std::make_unique<OOSManager>(_orb, *_mirror, params.getOOSServerPattern())),
     _requestedPort(params.getListenPort()),
     _sendV1(std::make_unique<RPCSendV1>()),
+    _sendV2(std::make_unique<RPCSendV2>()),
     _sendAdapters()
 {
     _transport.SetDirectWrite(false);

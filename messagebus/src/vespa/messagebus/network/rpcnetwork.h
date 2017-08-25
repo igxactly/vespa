@@ -72,6 +72,7 @@ private:
     std::unique_ptr<OOSManager>                   _oosManager;
     int                       _requestedPort;
     std::unique_ptr<RPCSendAdapter> _sendV1;
+    std::unique_ptr<RPCSendAdapter> _sendV2;
     SendAdapterMap            _sendAdapters;
 
     /**

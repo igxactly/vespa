@@ -10,15 +10,22 @@
 
 class FRT_ReflectionBuilder;
 
+namespace vespalib::slime { class Cursor; }
+namespace vespalib { class Memory; }
+namespace vespalib { class TraceNode; }
 namespace mbus {
 
 class Error;
+class Route;
+class Message;
+class RPCServiceAddress;
 
 class PayLoadFiller
 {
 public:
     virtual ~PayLoadFiller() { }
     virtual void fill(FRT_Values & v) const = 0;
+    virtual void fill(const vespalib::Memory & name, vespalib::slime::Cursor & v) const = 0;
 };
 
 class RPCSend : public RPCSendAdapter,
@@ -32,8 +39,17 @@ protected:
     string _serverIdent;
 
     virtual void build(FRT_ReflectionBuilder & builder) = 0;
-    virtual void send(RoutingNode &recipient, const vespalib::Version &version,
-                      const PayLoadFiller & filler, uint64_t timeRemaining) = 0;
+    virtual std::unique_ptr<Reply> createReply(const FRT_Values & response, const string & serviceName,
+                                               Error & error, vespalib::TraceNode & rootTrace) const = 0;
+    virtual void encodeRequest(FRT_RPCRequest &req, const vespalib::Version &version, const Route & route,
+                               const RPCServiceAddress & address, const Message & msg, uint32_t traceLevel,
+                               const PayLoadFiller &filler, uint64_t timeRemaining) const = 0;
+    virtual const char * getReturnSpec() const = 0;
+
+    void send(RoutingNode &recipient, const vespalib::Version &version,
+              const PayLoadFiller & filler, uint64_t timeRemaining);
+    std::unique_ptr<Reply> decode(vespalib::stringref protocol, const vespalib::Version & version,
+                                  BlobRef payload, Error & error) const;
     /**
      * Send an error reply for a given request.
      *
@@ -58,6 +74,7 @@ public:
                         Blob payload, uint64_t timeRemaining) final override;
     void send(RoutingNode &recipient, const vespalib::Version &version,
               BlobRef payload, uint64_t timeRemaining) final override;
+    void RequestDone(FRT_RPCRequest *req) final override;
 };
 
 } // namespace mbus

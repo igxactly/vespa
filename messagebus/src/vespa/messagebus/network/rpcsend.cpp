@@ -2,16 +2,21 @@
 
 #include "rpcsend.h"
 #include "rpcsend_private.h"
+#include "rpcserviceaddress.h"
 #include <vespa/messagebus/network/rpcnetwork.h>
+#include <vespa/messagebus/tracelevel.h>
 #include <vespa/messagebus/emptyreply.h>
+#include <vespa/messagebus/errorcode.h>
 #include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/fnet/channel.h>
+#include <vespa/vespalib/data/slime/cursor.h>
 
 using vespalib::make_string;
 
 namespace mbus {
 
 using network::internal::ReplyContext;
+using network::internal::SendContext;
 
 namespace {
 
@@ -21,6 +26,9 @@ public:
     FillByCopy(BlobRef payload) : _payload(payload) { }
     void fill(FRT_Values & v) const override {
         v.AddData(_payload.data(), _payload.size());
+    }
+    void fill(const vespalib::Memory & name, vespalib::slime::Cursor & v) const override {
+        v.setData(name, vespalib::Memory(_payload.data(), _payload.size()));
     }
 private:
     BlobRef _payload;
@@ -32,6 +40,9 @@ public:
     FillByHandover(Blob payload) : _payload(std::move(payload)) { }
     void fill(FRT_Values & v) const override {
         v.AddData(std::move(_payload.payload()), _payload.size());
+    }
+    void fill(const vespalib::Memory & name, vespalib::slime::Cursor & v) const override {
+        v.setData(name, vespalib::Memory(_payload.data(), _payload.size()));
     }
 private:
     mutable Blob _payload;
@@ -93,6 +104,110 @@ RPCSend::send(RoutingNode &recipient, const vespalib::Version &version,
                 BlobRef payload, uint64_t timeRemaining)
 {
     send(recipient, version, FillByCopy(payload), timeRemaining);
+}
+
+void
+RPCSend::send(RoutingNode &recipient, const vespalib::Version &version,
+              const PayLoadFiller & payload, uint64_t timeRemaining)
+{
+    SendContext::UP ctx(new SendContext(recipient, timeRemaining));
+    RPCServiceAddress &address = static_cast<RPCServiceAddress&>(recipient.getServiceAddress());
+    const Message &msg = recipient.getMessage();
+    Route route = recipient.getRoute();
+    Hop hop = route.removeHop(0);
+
+    FRT_RPCRequest *req = _net->allocRequest();
+    encodeRequest(*req, version, route, address, msg, recipient.getTrace().getLevel(),  payload, timeRemaining);
+
+    if (ctx->getTrace().shouldTrace(TraceLevel::SEND_RECEIVE)) {
+        ctx->getTrace().trace(TraceLevel::SEND_RECEIVE,
+                              make_string("Sending message (version %s) from %s to '%s' with %.2f seconds timeout.",
+                                          version.toString().c_str(), _clientIdent.c_str(),
+                                          address.getServiceName().c_str(), ctx->getTimeout()));
+    }
+
+    if (hop.getIgnoreResult()) {
+        address.getTarget().getFRTTarget().InvokeVoid(req);
+        if (ctx->getTrace().shouldTrace(TraceLevel::SEND_RECEIVE)) {
+            ctx->getTrace().trace(TraceLevel::SEND_RECEIVE,
+                                  make_string("Not waiting for a reply from '%s'.", address.getServiceName().c_str()));
+        }
+        Reply::UP reply(new EmptyReply());
+        reply->getTrace().swap(ctx->getTrace());
+        _net->getOwner().deliverReply(std::move(reply), recipient);
+    } else {
+        SendContext *ptr = ctx.release();
+        req->SetContext(FNET_Context(ptr));
+        address.getTarget().getFRTTarget().InvokeAsync(req, ptr->getTimeout(), this);
+    }
+}
+
+void
+RPCSend::RequestDone(FRT_RPCRequest *req)
+{
+    SendContext::UP ctx(static_cast<SendContext*>(req->GetContext()._value.VOIDP));
+    const string &serviceName = static_cast<RPCServiceAddress&>(ctx->getRecipient().getServiceAddress()).getServiceName();
+    Reply::UP reply;
+    Error error;
+    Trace & trace = ctx->getTrace();
+    if (!req->CheckReturnTypes(getReturnSpec())) {
+        reply.reset(new EmptyReply());
+        switch (req->GetErrorCode()) {
+            case FRTE_RPC_TIMEOUT:
+                error = Error(ErrorCode::TIMEOUT,
+                              make_string("A timeout occured while waiting for '%s' (%g seconds expired); %s",
+                                          serviceName.c_str(), ctx->getTimeout(), req->GetErrorMessage()));
+                break;
+            case FRTE_RPC_CONNECTION:
+                error = Error(ErrorCode::CONNECTION_ERROR,
+                              make_string("A connection error occured for '%s'; %s",
+                                          serviceName.c_str(), req->GetErrorMessage()));
+                break;
+            default:
+                error = Error(ErrorCode::NETWORK_ERROR,
+                              make_string("A network error occured for '%s'; %s",
+                                          serviceName.c_str(), req->GetErrorMessage()));
+        }
+    } else {
+        FRT_Values &ret = *req->GetReturn();
+        reply = createReply(ret, serviceName, error, trace.getRoot());
+    }
+    if (trace.shouldTrace(TraceLevel::SEND_RECEIVE)) {
+        trace.trace(TraceLevel::SEND_RECEIVE,
+                    make_string("Reply (type %d) received at %s.", reply->getType(), _clientIdent.c_str()));
+    }
+    reply->getTrace().swap(trace);
+    if (error.getCode() != ErrorCode::NONE) {
+        reply->addError(error);
+    }
+    _net->getOwner().deliverReply(std::move(reply), ctx->getRecipient());
+    req->SubRef();
+}
+
+std::unique_ptr<Reply>
+RPCSend::decode(vespalib::stringref protocolName, const vespalib::Version & version, BlobRef payload, Error & error) const
+{
+    Reply::UP reply;
+    IProtocol * protocol = _net->getOwner().getProtocol(protocolName);
+    if (protocol != nullptr) {
+        Routable::UP routable = protocol->decode(version, payload);
+        if (routable) {
+            if (routable->isReply()) {
+                reply.reset(static_cast<Reply*>(routable.release()));
+            } else {
+                error = Error(ErrorCode::DECODE_ERROR,
+                              "Payload decoded to a message when expecting a reply.");
+            }
+        } else {
+            error = Error(ErrorCode::DECODE_ERROR,
+                          make_string("Protocol '%s' failed to decode routable.", protocolName.c_str()));
+        }
+
+    } else {
+        error = Error(ErrorCode::UNKNOWN_PROTOCOL,
+                      make_string("Protocol '%s' is not known by %s.", protocolName.c_str(), _serverIdent.c_str()));
+    }
+    return reply;
 }
 
 } // namespace mbus

@@ -48,4 +48,5 @@ public:
     const vespalib::Version &getVersion() { return _version; }
 };
 
+
 }

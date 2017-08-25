@@ -14,7 +14,7 @@ LOG_SETUP("store_by_bucket_test");
 
 using namespace search::docstore;
 using document::BucketId;
-using document::CompressionConfig;
+using vespalib::compression::CompressionConfig;
 
 vespalib::string
 createPayload(BucketId b) {

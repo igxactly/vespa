@@ -6,6 +6,7 @@ vespa_define_module(
 
     EXTERNAL_DEPENDS
     lz4
+    zstd
 
     APPS
     src/apps/make_fixture_macros

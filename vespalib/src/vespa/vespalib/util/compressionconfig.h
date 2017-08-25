@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <cstddef>
 
-namespace document {
+namespace vespalib::compression {
 
 struct CompressionConfig {
     enum Type {

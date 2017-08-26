@@ -28,17 +28,25 @@ namespace {
 
 const char *METHOD_NAME   = "mbus.slime";
 const char *METHOD_PARAMS = "bix";
-const char *METHOD_RETURN = "sdISSsxs";
+const char *METHOD_RETURN = "bix";
 
 Memory VERSION_F("version");
 Memory ROUTE_F("route");
 Memory SESSION_F("session");
-Memory USERETRY_F("use_retry");
+Memory USERETRY_F("useretry");
+Memory RETRYDELAY_F("retrydelay");
 Memory RETRY_F("retry");
 Memory TIMELEFT_F("timeleft");
 Memory PROTOCOL_F("prot");
-Memory TRACELEVEL_F("trace");
+Memory TRACELEVEL_F("tracelevel");
+Memory TRACE_F("trace");
 Memory BLOB_F("msg");
+Memory ERRORS_F("errors");
+Memory ERROR_F("error");
+Memory CODE_F("code");
+Memory MSG_F("msg");
+Memory SERVICE_F("service");
+
 
 }
 
@@ -169,58 +177,68 @@ std::unique_ptr<Reply>
 RPCSendV2::createReply(const FRT_Values & ret, const string & serviceName,
                        Error & error, vespalib::TraceNode & rootTrace) const
 {
-    Version           version          = Version(ret[0]._string._str);
-    double            retryDelay       = ret[1]._double;
-    uint32_t         *errorCodes       = ret[2]._int32_array._pt;
-    uint32_t          errorCodesLen    = ret[2]._int32_array._len;
-    FRT_StringValue  *errorMessages    = ret[3]._string_array._pt;
-    uint32_t          errorMessagesLen = ret[3]._string_array._len;
-    FRT_StringValue  *errorServices    = ret[4]._string_array._pt;
-    uint32_t          errorServicesLen = ret[4]._string_array._len;
-    const char       *protocolName     = ret[5]._string._str;
-    const char       *payload          = ret[6]._data._buf;
-    uint32_t          payloadLen       = ret[6]._data._len;
-    const char       *trace            = ret[7]._string._str;
+    uint8_t encoding = ret[0]._intval8;
+    uint32_t uncompressedSize = ret[1]._intval32;
+    DataBuffer uncompressed(ret[2]._data._buf, ret[2]._data._len);
+    ConstBufferRef blob(ret[2]._data._buf, ret[2]._data._len);
+    decompress(CompressionConfig::toType(encoding), uncompressedSize, blob, uncompressed, true);
+    assert(uncompressedSize == uncompressed.getDataLen());
+    Slime slime;
+    BinaryFormat::decode(Memory(uncompressed.getData(), uncompressed.getDataLen()), slime);
+    Inspector & root = slime.get();
+    Version version(root[VERSION_F].asString().make_string());
+    Memory payload = root[BLOB_F].asData();
 
     Reply::UP reply;
-    if (payloadLen > 0) {
-        reply = decode(protocolName, version, BlobRef(payload, payloadLen), error);
+    if (payload.size > 0) {
+        reply = decode(root[PROTOCOL_F].asString().make_stringref(), version, BlobRef(payload.data, payload.size), error);
     }
     if ( ! reply ) {
         reply.reset(new EmptyReply());
     }
-    reply->setRetryDelay(retryDelay);
-    for (uint32_t i = 0; i < errorCodesLen && i < errorMessagesLen && i < errorServicesLen; ++i) {
-        reply->addError(Error(errorCodes[i], errorMessages[i]._str,
-                              errorServices[i]._len > 0 ? errorServices[i]._str : serviceName.c_str()));
+    reply->setRetryDelay(root[RETRYDELAY_F].asDouble());
+    Inspector & errors = root[ERRORS_F];
+    for (uint32_t i = 0; i < errors.entries(); ++i) {
+        Inspector & e = errors[i];
+        Memory service = e[SERVICE_F].asString();
+        reply->addError(Error(e[CODE_F].asLong(), e[MSG_F].asString().make_string(),
+                              (service.size > 0) ? service.make_string() : serviceName));
     }
-    rootTrace.addChild(TraceNode::decode(trace));
+    rootTrace.addChild(TraceNode::decode(root[TRACE_F].asString().make_string()));
     return reply;
 }
 
 void
 RPCSendV2::createResponse(FRT_Values & ret, const string & version, Reply & reply, Blob payload) const
 {
-    ret.AddString(version.c_str());
-    ret.AddDouble(reply.getRetryDelay());
+    Slime slime;
+    Cursor & root = slime.setObject();
 
-    uint32_t         errorCount    = reply.getNumErrors();
-    uint32_t        *errorCodes    = ret.AddInt32Array(errorCount);
-    FRT_StringValue *errorMessages = ret.AddStringArray(errorCount);
-    FRT_StringValue *errorServices = ret.AddStringArray(errorCount);
-    for (uint32_t i = 0; i < errorCount; ++i) {
-        errorCodes[i] = reply.getError(i).getCode();
-        ret.SetString(errorMessages + i, reply.getError(i).getMessage().c_str());
-        ret.SetString(errorServices + i, reply.getError(i).getService().c_str());
-    }
-
-    ret.AddString(reply.getProtocol().c_str());
-    ret.AddData(std::move(payload.payload()), payload.size());
+    root.setString(VERSION_F, version);
+    root.setDouble(RETRYDELAY_F, reply.getRetryDelay());
+    root.setString(PROTOCOL_F, reply.getProtocol());
+    root.setData(BLOB_F, vespalib::Memory(payload.data(), payload.size()));
     if (reply.getTrace().getLevel() > 0) {
-        ret.AddString(reply.getTrace().getRoot().encode().c_str());
-    } else {
-        ret.AddString("");
+        root.setString(TRACE_F, reply.getTrace().getRoot().encode());
     }
+
+    if (reply.getNumErrors() > 0) {
+        Cursor & array = root.setArray(ERRORS_F);
+        for (uint32_t i = 0; i < reply.getNumErrors(); ++i) {
+            Cursor & error = array.addObject();
+            error.setLong(CODE_F, reply.getError(i).getCode());
+            error.setString(MSG_F, reply.getError(i).getMessage());
+            error.setString(SERVICE_F, reply.getError(i).getService().c_str());
+        }
+    }
+
+    OutputBuf buf(8192);
+    BinaryFormat::encode(slime, buf);
+
+    size_t unCompressedSize = buf.getBuf().getDataLen();
+    ret.AddInt8(0);
+    ret.AddInt32(buf.getBuf().getDataLen());
+    ret.AddData(buf.getBuf().stealBuffer(), unCompressedSize);
 }
 
 } // namespace mbus

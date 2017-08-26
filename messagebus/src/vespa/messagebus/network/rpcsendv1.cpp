@@ -126,13 +126,12 @@ RPCSendV1::createReply(const FRT_Values & ret, const string & serviceName, Error
     FRT_StringValue  *errorServices    = ret[4]._string_array._pt;
     uint32_t          errorServicesLen = ret[4]._string_array._len;
     const char       *protocolName     = ret[5]._string._str;
-    const char       *payload          = ret[6]._data._buf;
-    uint32_t          payloadLen       = ret[6]._data._len;
+    BlobRef payload(ret[6]._data._buf, ret[6]._data._len);
     const char       *trace            = ret[7]._string._str;
 
     Reply::UP reply;
-    if (payloadLen > 0) {
-        reply = decode(protocolName, version, BlobRef(payload, payloadLen), error);
+    if (payload.size() > 0) {
+        reply = decode(protocolName, version, payload, error);
     }
     if ( ! reply ) {
         reply.reset(new EmptyReply());

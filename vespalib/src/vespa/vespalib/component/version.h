@@ -83,7 +83,7 @@ public:
      * @throws IllegalArgumentException If <code>version</code> is improperly
      *         formatted.
      */
-    Version(const stringref & versionString);
+    Version(const string & versionString);
 
     /** @brief Returns the major component of this version, or 0 if not specified */
     int getMajor() const { return _major; }

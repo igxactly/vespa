@@ -74,38 +74,6 @@ RPCSendV1::encodeRequest(FRT_RPCRequest &req, const vespalib::Version &version, 
     args.AddInt32(traceLevel);
 }
 
-std::unique_ptr<Reply>
-RPCSendV1::createReply(const FRT_Values & ret, const string & serviceName, Error & error, vespalib::TraceNode & rootTrace) const
-{
-    vespalib::Version version          = vespalib::Version(ret[0]._string._str);
-    double            retryDelay       = ret[1]._double;
-    uint32_t         *errorCodes       = ret[2]._int32_array._pt;
-    uint32_t          errorCodesLen    = ret[2]._int32_array._len;
-    FRT_StringValue  *errorMessages    = ret[3]._string_array._pt;
-    uint32_t          errorMessagesLen = ret[3]._string_array._len;
-    FRT_StringValue  *errorServices    = ret[4]._string_array._pt;
-    uint32_t          errorServicesLen = ret[4]._string_array._len;
-    const char       *protocolName     = ret[5]._string._str;
-    const char       *payload          = ret[6]._data._buf;
-    uint32_t          payloadLen       = ret[6]._data._len;
-    const char       *trace            = ret[7]._string._str;
-
-    Reply::UP reply;
-    if (payloadLen > 0) {
-        reply = decode(protocolName, version, BlobRef(payload, payloadLen), error);
-    }
-    if ( ! reply ) {
-        reply.reset(new EmptyReply());
-    }
-    reply->setRetryDelay(retryDelay);
-    for (uint32_t i = 0; i < errorCodesLen && i < errorMessagesLen && i < errorServicesLen; ++i) {
-        reply->addError(Error(errorCodes[i], errorMessages[i]._str,
-                              errorServices[i]._len > 0 ? errorServices[i]._str : serviceName.c_str()));
-    }
-    rootTrace.addChild(TraceNode::decode(trace));
-    return reply;
-}
-
 namespace {
 
 class ParamsV1 : public RPCSend::Params
@@ -143,6 +111,39 @@ std::unique_ptr<RPCSend::Params>
 RPCSendV1::toParams(const FRT_Values &args) const
 {
     return std::make_unique<ParamsV1>(args);
+}
+
+
+std::unique_ptr<Reply>
+RPCSendV1::createReply(const FRT_Values & ret, const string & serviceName, Error & error, vespalib::TraceNode & rootTrace) const
+{
+    vespalib::Version version          = vespalib::Version(ret[0]._string._str);
+    double            retryDelay       = ret[1]._double;
+    uint32_t         *errorCodes       = ret[2]._int32_array._pt;
+    uint32_t          errorCodesLen    = ret[2]._int32_array._len;
+    FRT_StringValue  *errorMessages    = ret[3]._string_array._pt;
+    uint32_t          errorMessagesLen = ret[3]._string_array._len;
+    FRT_StringValue  *errorServices    = ret[4]._string_array._pt;
+    uint32_t          errorServicesLen = ret[4]._string_array._len;
+    const char       *protocolName     = ret[5]._string._str;
+    const char       *payload          = ret[6]._data._buf;
+    uint32_t          payloadLen       = ret[6]._data._len;
+    const char       *trace            = ret[7]._string._str;
+
+    Reply::UP reply;
+    if (payloadLen > 0) {
+        reply = decode(protocolName, version, BlobRef(payload, payloadLen), error);
+    }
+    if ( ! reply ) {
+        reply.reset(new EmptyReply());
+    }
+    reply->setRetryDelay(retryDelay);
+    for (uint32_t i = 0; i < errorCodesLen && i < errorMessagesLen && i < errorServicesLen; ++i) {
+        reply->addError(Error(errorCodes[i], errorMessages[i]._str,
+                              errorServices[i]._len > 0 ? errorServices[i]._str : serviceName.c_str()));
+    }
+    rootTrace.addChild(TraceNode::decode(trace));
+    return reply;
 }
 
 void

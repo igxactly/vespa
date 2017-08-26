@@ -6,19 +6,19 @@
 namespace mbus {
 
 class RPCSendV2 : public RPCSend {
+public:
+    static bool isCompatible(vespalib::stringref method, vespalib::stringref request, vespalib::stringref respons);
 private:
+    void build(FRT_ReflectionBuilder & builder) override;
+    const char * getReturnSpec() const override;
+    std::unique_ptr<Params> toParams(const FRT_Values &param) const override;
     void encodeRequest(FRT_RPCRequest &req, const vespalib::Version &version, const Route & route,
                        const RPCServiceAddress & address, const Message & msg, uint32_t traceLevel,
                        const PayLoadFiller &filler, uint64_t timeRemaining) const override;
 
-    void build(FRT_ReflectionBuilder & builder) override;
-    const char * getReturnSpec() const override;
     std::unique_ptr<Reply> createReply(const FRT_Values & response, const string & serviceName,
                                        Error & error, vespalib::TraceNode & rootTrace) const override;
     void createResponse(FRT_Values & ret, const string & version, Reply & reply, Blob payload) const override;
-    std::unique_ptr<Params> toParams(const FRT_Values &param) const override;
-public:
-    static bool isCompatible(vespalib::stringref method, vespalib::stringref request, vespalib::stringref respons);
 };
 
 } // namespace mbus

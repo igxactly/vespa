@@ -82,14 +82,14 @@ static int parseInteger(const stringref & input)
 }
 
 
-Version::Version(const stringref & versionString)
+Version::Version(const string & versionString)
     : _major(0),
       _minor(0),
       _micro(0),
       _qualifier(),
       _stringValue(versionString)
 {
-    if (versionString != "") {
+    if ( ! versionString.empty()) {
         stringref r(versionString.c_str(), versionString.size());
         stringref::size_type dot(r.find('.'));
         stringref majorS(r.substr(0, dot)); 

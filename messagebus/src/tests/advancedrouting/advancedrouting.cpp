@@ -3,14 +3,12 @@
 #include <vespa/messagebus/testlib/custompolicy.h>
 #include <vespa/messagebus/testlib/receptor.h>
 #include <vespa/messagebus/testlib/simplemessage.h>
-#include <vespa/messagebus/testlib/simpleprotocol.h>
 #include <vespa/messagebus/testlib/slobrok.h>
 #include <vespa/messagebus/testlib/testserver.h>
 #include <vespa/vespalib/testkit/testapp.h>
 #include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/messagebus/emptyreply.h>
 #include <vespa/messagebus/errorcode.h>
-#include <vespa/messagebus/routing/errordirective.h>
 #include <vespa/messagebus/routing/retrytransienterrorspolicy.h>
 
 using namespace mbus;
@@ -117,7 +115,7 @@ Test::Main()
 void
 Test::testAdvanced(TestData &data)
 {
-    const double TIMEOUT=60;
+    const double TIMEOUT = 60;
     IProtocol::SP protocol(new SimpleProtocol());
     SimpleProtocol &simple = static_cast<SimpleProtocol&>(*protocol);
     simple.addPolicyFactory("Custom", SimpleProtocol::IPolicyFactory::SP(new CustomPolicyFactory(false, ErrorCode::NO_ADDRESS_FOR_SERVICE)));

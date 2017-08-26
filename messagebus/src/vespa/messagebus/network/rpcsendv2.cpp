@@ -8,30 +8,41 @@
 #include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/vespalib/data/slime/slime.h>
 #include <vespa/vespalib/data/databuffer.h>
+#include <vespa/vespalib/util/compressor.h>
 
 using vespalib::make_string;
+using vespalib::compression::CompressionConfig;
+using vespalib::compression::decompress;
+using vespalib::compression::compress;
+using vespalib::DataBuffer;
+using vespalib::ConstBufferRef;
+using vespalib::stringref;
+using vespalib::Memory;
+using vespalib::Slime;
+using vespalib::Version;
+using namespace vespalib::slime;
 
 namespace mbus {
 
 namespace {
 
 const char *METHOD_NAME   = "mbus.slime";
-const char *METHOD_PARAMS = "bxi";
-const char *METHOD_RETURN = "bxi";
+const char *METHOD_PARAMS = "bix";
+const char *METHOD_RETURN = "sdISSsxs";
 
-vespalib::Memory VERSION_F("version");
-vespalib::Memory ROUTE_F("route");
-vespalib::Memory SESSION_F("session");
-vespalib::Memory USERETRY_F("use_retry");
-vespalib::Memory RETRY_F("retry");
-vespalib::Memory TIMELEFT_F("timeleft");
-vespalib::Memory PROTOCOL_F("prot");
-vespalib::Memory TRACELEVEL_F("trace");
-vespalib::Memory BLOB_F("msg");
+Memory VERSION_F("version");
+Memory ROUTE_F("route");
+Memory SESSION_F("session");
+Memory USERETRY_F("use_retry");
+Memory RETRY_F("retry");
+Memory TIMELEFT_F("timeleft");
+Memory PROTOCOL_F("prot");
+Memory TRACELEVEL_F("trace");
+Memory BLOB_F("msg");
 
 }
 
-bool RPCSendV2::isCompatible(vespalib::stringref method, vespalib::stringref request, vespalib::stringref respons)
+bool RPCSendV2::isCompatible(stringref method, stringref request, stringref respons)
 {
     return  (method == METHOD_NAME) &&
             (request == METHOD_PARAMS) &&
@@ -60,7 +71,7 @@ namespace {
 class OutputBuf : public vespalib::Output {
 public:
     OutputBuf(size_t estimatedSize) : _buf(estimatedSize) { }
-    vespalib::DataBuffer & getBuf() { return _buf; }
+    DataBuffer & getBuf() { return _buf; }
 private:
     vespalib::WritableMemory reserve(size_t bytes) override {
         _buf.ensureFree(bytes);
@@ -70,20 +81,20 @@ private:
         _buf.moveFreeToData(bytes);
         return *this;
     }
-    vespalib::DataBuffer _buf;
+    DataBuffer _buf;
 };
 }
 
 void
-RPCSendV2::encodeRequest(FRT_RPCRequest &req, const vespalib::Version &version, const Route & route,
+RPCSendV2::encodeRequest(FRT_RPCRequest &req, const Version &version, const Route & route,
                          const RPCServiceAddress & address, const Message & msg, uint32_t traceLevel,
                          const PayLoadFiller &filler, uint64_t timeRemaining) const
 {
     FRT_Values &args = *req.GetParams();
     req.SetMethodName(METHOD_NAME);
 
-    vespalib::Slime slime;
-    vespalib::slime::Cursor & root = slime.get();
+    Slime slime;
+    Cursor & root = slime.setObject();
 
     root.setString(VERSION_F, version.toString());
     root.setString(ROUTE_F, route.toString());
@@ -96,7 +107,7 @@ RPCSendV2::encodeRequest(FRT_RPCRequest &req, const vespalib::Version &version, 
     filler.fill(BLOB_F, root);
 
     OutputBuf buf(8192);
-    vespalib::slime::BinaryFormat::encode(slime, buf);
+    BinaryFormat::encode(slime, buf);
 
     size_t unCompressedSize = buf.getBuf().getDataLen();
     args.AddInt8(0);
@@ -104,10 +115,61 @@ RPCSendV2::encodeRequest(FRT_RPCRequest &req, const vespalib::Version &version, 
     args.AddData(buf.getBuf().stealBuffer(), unCompressedSize);
 }
 
-std::unique_ptr<Reply>
-RPCSendV2::createReply(const FRT_Values & ret, const string & serviceName, Error & error, vespalib::TraceNode & rootTrace) const
+namespace {
+
+class ParamsV2 : public RPCSend::Params
 {
-    vespalib::Version version          = vespalib::Version(ret[0]._string._str);
+public:
+    ParamsV2(const FRT_Values &arg)
+        : _slime()
+    {
+        uint8_t encoding = arg[0]._intval8;
+        uint32_t uncompressedSize = arg[1]._intval32;
+        DataBuffer uncompressed(arg[2]._data._buf, arg[2]._data._len);
+        ConstBufferRef blob(arg[2]._data._buf, arg[2]._data._len);
+        decompress(CompressionConfig::toType(encoding), uncompressedSize, blob, uncompressed, true);
+        assert(uncompressedSize == uncompressed.getDataLen());
+        BinaryFormat::decode(Memory(uncompressed.getData(), uncompressed.getDataLen()), _slime);
+    }
+
+    uint32_t getTraceLevel() const override { return _slime.get()[TRACELEVEL_F].asLong(); }
+    bool useRetry() const override { return _slime.get()[USERETRY_F].asBool(); }
+    uint32_t getRetries() const override { return _slime.get()[RETRY_F].asLong(); }
+    uint64_t getRemainingTime() const override { return _slime.get()[TIMELEFT_F].asLong(); }
+
+    Version getVersion() const override {
+        return Version(_slime.get()[VERSION_F].asString().make_stringref());
+    }
+    stringref getRoute() const override {
+        return _slime.get()[ROUTE_F].asString().make_stringref();
+    }
+    stringref getSession() const override {
+        return _slime.get()[SESSION_F].asString().make_stringref();
+    }
+    stringref getProtocol() const override {
+        return _slime.get()[PROTOCOL_F].asString().make_stringref();
+    }
+    BlobRef getPayload() const override {
+        Memory m = _slime.get()[BLOB_F].asData();
+        return BlobRef(m.data, m.size);
+    }
+private:
+    Slime _slime;
+};
+
+}
+
+std::unique_ptr<RPCSend::Params>
+RPCSendV2::toParams(const FRT_Values &args) const
+{
+    return std::make_unique<ParamsV2>(args);
+}
+
+std::unique_ptr<Reply>
+RPCSendV2::createReply(const FRT_Values & ret, const string & serviceName,
+                       Error & error, vespalib::TraceNode & rootTrace) const
+{
+    Version           version          = Version(ret[0]._string._str);
     double            retryDelay       = ret[1]._double;
     uint32_t         *errorCodes       = ret[2]._int32_array._pt;
     uint32_t          errorCodesLen    = ret[2]._int32_array._len;
@@ -159,45 +221,6 @@ RPCSendV2::createResponse(FRT_Values & ret, const string & version, Reply & repl
     } else {
         ret.AddString("");
     }
-}
-
-namespace {
-
-class ParamsV2 : public RPCSend::Params
-{
-public:
-    ParamsV2(const FRT_Values &args) : _args(args) { }
-
-    uint32_t getTraceLevel() const override { return _args[8]._intval32; }
-    bool useRetry() const override { return _args[3]._intval8 != 0; }
-    uint32_t getRetries() const override { return _args[4]._intval32; }
-    uint64_t getRemainingTime() const override { return _args[5]._intval64; }
-
-    vespalib::Version getVersion() const override {
-        return vespalib::Version(vespalib::stringref(_args[0]._string._str, _args[0]._string._len));
-    }
-    vespalib::stringref getRoute() const override {
-        return vespalib::stringref(_args[1]._string._str, _args[1]._string._len);
-    }
-    vespalib::stringref getSession() const override {
-        return vespalib::stringref(_args[2]._string._str, _args[2]._string._len);
-    }
-    vespalib::stringref getProtocol() const override {
-        return vespalib::stringref(_args[6]._string._str, _args[6]._string._len);
-    }
-    BlobRef getPayload() const override {
-        return BlobRef(_args[7]._data._buf, _args[7]._data._len);
-    }
-private:
-    const FRT_Values & _args;
-};
-
-}
-
-std::unique_ptr<RPCSend::Params>
-RPCSendV2::toParams(const FRT_Values &args) const
-{
-    return std::make_unique<ParamsV2>(args);
 }
 
 } // namespace mbus

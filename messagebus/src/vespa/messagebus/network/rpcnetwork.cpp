@@ -177,8 +177,9 @@ RPCNetwork::attach(INetworkOwner &owner)
     _owner = &owner;
 
     _sendV1->attach(*this);
-    _sendAdapters.insert(SendAdapterMap::value_type(vespalib::VersionSpecification(5), _sendV1.get()));
-    _sendAdapters.insert(SendAdapterMap::value_type(vespalib::VersionSpecification(6), _sendV1.get()));
+    _sendV2->attach(*this);
+    _sendAdapters.insert(SendAdapterMap::value_type(vespalib::VersionSpecification(5), _sendV2.get()));
+    _sendAdapters.insert(SendAdapterMap::value_type(vespalib::VersionSpecification(6), _sendV2.get()));
 
     FRT_ReflectionBuilder builder(&_orb);
     builder.DefineMethod("mbus.getVersion", "", "s", true, FRT_METHOD(RPCNetwork::invoke), this);

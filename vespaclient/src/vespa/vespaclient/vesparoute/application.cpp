@@ -15,6 +15,7 @@
 #include <vespa/config/common/exceptions.h>
 #include <vespa/config/helper/configgetter.hpp>
 #include <vespa/vespalib/util/stringfmt.h>
+#include <vespa/fnet/frt/supervisor.h>
 
 using config::ConfigGetter;
 using document::DocumenttypesConfig;

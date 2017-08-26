@@ -11,8 +11,10 @@
 #include <vespa/messagebus/reply.h>
 #include <vespa/slobrok/imirrorapi.h>
 #include <vespa/vespalib/component/versionspecification.h>
-#include <vespa/fnet/transport.h>
-#include <vespa/fnet/frt/supervisor.h>
+#include <vespa/vespalib/util/compressionconfig.h>
+#include <vespa/fnet/frt/invokable.h>
+
+class FNET_Transport;
 
 namespace slobrok {
     namespace api { class RegisterAPI; }
@@ -34,6 +36,7 @@ class RPCServiceAddress;
 class RPCNetwork : public INetwork,
                    public FRT_Invokable {
 private:
+    using CompressionConfig = vespalib::compression::CompressionConfig;
     struct SendContext : public RPCTarget::IVersionHandler {
         vespalib::Lock            _lock;
         RPCNetwork               &_net;
@@ -55,13 +58,13 @@ private:
         void PerformTask() override;
     };
 
-    typedef std::map<vespalib::VersionSpecification, RPCSendAdapter*> SendAdapterMap;
+    using SendAdapterMap = std::map<vespalib::VersionSpecification, RPCSendAdapter*>;
 
     INetworkOwner            *_owner;
     Identity                  _ident;
-    FastOS_ThreadPool         _threadPool;
-    FNET_Transport            _transport;
-    FRT_Supervisor            _orb;
+    std::unique_ptr<FastOS_ThreadPool>        _threadPool;
+    std::unique_ptr<FNET_Transport>           _transport;
+    std::unique_ptr<FRT_Supervisor>            _orb;
     FNET_Scheduler           &_scheduler;
     std::unique_ptr<RPCTargetPool>                _targetPool;
     TargetPoolTask            _targetPoolTask;
@@ -74,6 +77,7 @@ private:
     std::unique_ptr<RPCSendAdapter> _sendV1;
     std::unique_ptr<RPCSendAdapter> _sendV2;
     SendAdapterMap            _sendAdapters;
+    CompressionConfig         _compressionConfig;
 
     /**
      * Resolves and assigns a service address for the given recipient using the
@@ -164,7 +168,7 @@ public:
      *
      * @return port number
      **/
-    int getPort() const { return _orb.GetListenPort(); }
+    int getPort() const;
 
     /**
      * Allocate a new rpc request object. The caller of this method gets the
@@ -204,7 +208,7 @@ public:
      *
      * @return The supervisor.
      */
-    FRT_Supervisor &getSupervisor() { return _orb; }
+    FRT_Supervisor &getSupervisor() { return *_orb; }
 
     /**
      * Deliver an error reply to the recipients of a {@link SendContext} in a
@@ -230,7 +234,7 @@ public:
     void shutdown() override;
     void postShutdownHook() override;
     const slobrok::api::IMirrorAPI &getMirror() const override;
-
+    CompressionConfig getCompressionConfig() { return _compressionConfig; }
     void invoke(FRT_RPCRequest *req);
 };
 

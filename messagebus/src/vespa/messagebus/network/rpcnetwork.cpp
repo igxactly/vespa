@@ -16,6 +16,8 @@
 #include <vespa/vespalib/component/vtag.h>
 #include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/fnet/scheduler.h>
+#include <vespa/fnet/transport.h>
+#include <vespa/fnet/frt/supervisor.h>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".rpcnetwork");
@@ -57,17 +59,15 @@ public:
 namespace mbus {
 
 RPCNetwork::SendContext::SendContext(RPCNetwork &net, const Message &msg,
-                                     const std::vector<RoutingNode*> &recipients) :
-    _net(net),
-    _msg(msg),
-    _traceLevel(msg.getTrace().getLevel()),
-    _recipients(recipients),
-    _hasError(false),
-    _pending(_recipients.size()),
-    _version(_net.getVersion())
-{
-    // empty
-}
+                                     const std::vector<RoutingNode*> &recipients)
+    : _net(net),
+      _msg(msg),
+      _traceLevel(msg.getTrace().getLevel()),
+      _recipients(recipients),
+      _hasError(false),
+      _pending(_recipients.size()),
+      _version(_net.getVersion())
+{ }
 
 void
 RPCNetwork::SendContext::handleVersion(const vespalib::Version *version)
@@ -90,11 +90,9 @@ RPCNetwork::SendContext::handleVersion(const vespalib::Version *version)
     }
 }
 
-RPCNetwork::TargetPoolTask::TargetPoolTask(
-        FNET_Scheduler &scheduler,
-        RPCTargetPool &pool) :
-    FNET_Task(&scheduler),
-    _pool(pool)
+RPCNetwork::TargetPoolTask::TargetPoolTask(FNET_Scheduler &scheduler, RPCTargetPool &pool)
+    : FNET_Task(&scheduler),
+      _pool(pool)
 {
     ScheduleNow();
 }
@@ -109,25 +107,26 @@ RPCNetwork::TargetPoolTask::PerformTask()
 RPCNetwork::RPCNetwork(const RPCNetworkParams &params) :
     _owner(0),
     _ident(params.getIdentity()),
-    _threadPool(128000, 0),
-    _transport(),
-    _orb(&_transport, NULL),
-    _scheduler(*_transport.GetScheduler()),
+    _threadPool(std::make_unique<FastOS_ThreadPool>(128000, 0)),
+    _transport(std::make_unique<FNET_Transport>()),
+    _orb(std::make_unique<FRT_Supervisor>(_transport.get(), _threadPool.get())),
+    _scheduler(*_transport->GetScheduler()),
     _targetPool(std::make_unique<RPCTargetPool>(params.getConnectionExpireSecs())),
     _targetPoolTask(_scheduler, *_targetPool),
     _servicePool(std::make_unique<RPCServicePool>(*this, 4096)),
     _slobrokCfgFactory(std::make_unique<slobrok::ConfiguratorFactory>(params.getSlobrokConfig())),
-    _mirror(std::make_unique<slobrok::api::MirrorAPI>(_orb, *_slobrokCfgFactory)),
-    _regAPI(std::make_unique<slobrok::api::RegisterAPI>(_orb, *_slobrokCfgFactory)),
-    _oosManager(std::make_unique<OOSManager>(_orb, *_mirror, params.getOOSServerPattern())),
+    _mirror(std::make_unique<slobrok::api::MirrorAPI>(*_orb, *_slobrokCfgFactory)),
+    _regAPI(std::make_unique<slobrok::api::RegisterAPI>(*_orb, *_slobrokCfgFactory)),
+    _oosManager(std::make_unique<OOSManager>(*_orb, *_mirror, params.getOOSServerPattern())),
     _requestedPort(params.getListenPort()),
     _sendV1(std::make_unique<RPCSendV1>()),
     _sendV2(std::make_unique<RPCSendV2>()),
-    _sendAdapters()
+    _sendAdapters(),
+    _compressionConfig(params.getCompressionConfig())
 {
-    _transport.SetDirectWrite(false);
-    _transport.SetMaxInputBufferSize(params.getMaxInputBufferSize());
-    _transport.SetMaxOutputBufferSize(params.getMaxOutputBufferSize());
+    _transport->SetDirectWrite(false);
+    _transport->SetMaxInputBufferSize(params.getMaxInputBufferSize());
+    _transport->SetMaxOutputBufferSize(params.getMaxOutputBufferSize());
 }
 
 RPCNetwork::~RPCNetwork()
@@ -138,13 +137,13 @@ RPCNetwork::~RPCNetwork()
 FRT_RPCRequest *
 RPCNetwork::allocRequest()
 {
-    return _orb.AllocRPCRequest();
+    return _orb->AllocRPCRequest();
 }
 
 RPCTarget::SP
 RPCNetwork::getTarget(const RPCServiceAddress &address)
 {
-    return _targetPool->getTarget(_orb, address);
+    return _targetPool->getTarget(*_orb, address);
 }
 
 void
@@ -157,6 +156,9 @@ RPCNetwork::replyError(const SendContext &ctx, uint32_t errCode, const string &e
         _owner->deliverReply(std::move(reply), *rnode);
     }
 }
+
+int RPCNetwork::getPort() const { return _orb->GetListenPort(); }
+
 
 void
 RPCNetwork::flushTargetPool()
@@ -181,7 +183,7 @@ RPCNetwork::attach(INetworkOwner &owner)
     _sendAdapters.insert(SendAdapterMap::value_type(vespalib::VersionSpecification(5), _sendV2.get()));
     _sendAdapters.insert(SendAdapterMap::value_type(vespalib::VersionSpecification(6), _sendV2.get()));
 
-    FRT_ReflectionBuilder builder(&_orb);
+    FRT_ReflectionBuilder builder(_orb.get());
     builder.DefineMethod("mbus.getVersion", "", "s", true, FRT_METHOD(RPCNetwork::invoke), this);
     builder.MethodDesc("Retrieves the message bus version.");
     builder.ReturnDesc("version", "The message bus version.");
@@ -196,7 +198,7 @@ RPCNetwork::invoke(FRT_RPCRequest *req)
 const string
 RPCNetwork::getConnectionSpec() const
 {
-    return make_string("tcp/%s:%d", _ident.getHostname().c_str(), _orb.GetListenPort());
+    return make_string("tcp/%s:%d", _ident.getHostname().c_str(), _orb->GetListenPort());
 }
 
 RPCSendAdapter *
@@ -213,10 +215,10 @@ RPCNetwork::getSendAdapter(const vespalib::Version &version)
 bool
 RPCNetwork::start()
 {
-    if (!_orb.Listen(_requestedPort)) {
+    if (!_orb->Listen(_requestedPort)) {
         return false;
     }
-    if (!_transport.Start(&_threadPool)) {
+    if (!_transport->Start(_threadPool.get())) {
         return false;
     }
     return true;
@@ -307,7 +309,7 @@ RPCNetwork::resolveServiceAddress(RoutingNode &recipient, const string &serviceN
                                  "The service must be having problems, or the routing configuration is wrong.",
                                  serviceName.c_str()));
     }
-    RPCTarget::SP target = _targetPool->getTarget(_orb, *ret);
+    RPCTarget::SP target = _targetPool->getTarget(*_orb, *ret);
     if (target.get() == NULL) {
         return Error(ErrorCode::CONNECTION_ERROR,
                      make_string("Failed to connect to service '%s'.", serviceName.c_str()));
@@ -343,8 +345,7 @@ void
 RPCNetwork::send(RPCNetwork::SendContext &ctx)
 {
     if (ctx._hasError) {
-        replyError(ctx, ErrorCode::HANDSHAKE_FAILED,
-                   "An error occured while resolving version.");
+        replyError(ctx, ErrorCode::HANDSHAKE_FAILED, "An error occured while resolving version.");
     } else {
         uint64_t timeRemaining = ctx._msg.getTimeRemainingNow();
         Blob payload = _owner->getProtocol(ctx._msg.getProtocol())->encode(ctx._version, ctx._msg);
@@ -378,8 +379,8 @@ RPCNetwork::sync()
 void
 RPCNetwork::shutdown()
 {
-    _transport.ShutDown(false);
-    _threadPool.Close();
+    _transport->ShutDown(false);
+    _threadPool->Close();
 }
 
 void

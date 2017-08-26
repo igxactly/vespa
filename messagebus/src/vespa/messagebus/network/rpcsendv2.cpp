@@ -9,6 +9,7 @@
 #include <vespa/vespalib/data/slime/slime.h>
 #include <vespa/vespalib/data/databuffer.h>
 #include <vespa/vespalib/util/compressor.h>
+#include <vespa/fnet/frt/reflection.h>
 
 using vespalib::make_string;
 using vespalib::compression::CompressionConfig;
@@ -98,9 +99,6 @@ RPCSendV2::encodeRequest(FRT_RPCRequest &req, const Version &version, const Rout
                          const RPCServiceAddress & address, const Message & msg, uint32_t traceLevel,
                          const PayLoadFiller &filler, uint64_t timeRemaining) const
 {
-    FRT_Values &args = *req.GetParams();
-    req.SetMethodName(METHOD_NAME);
-
     Slime slime;
     Cursor & root = slime.setObject();
 
@@ -114,13 +112,17 @@ RPCSendV2::encodeRequest(FRT_RPCRequest &req, const Version &version, const Rout
     root.setLong(TRACELEVEL_F, traceLevel);
     filler.fill(BLOB_F, root);
 
-    OutputBuf buf(8192);
-    BinaryFormat::encode(slime, buf);
+    OutputBuf rBuf(8192);
+    BinaryFormat::encode(slime, rBuf);
+    ConstBufferRef toCompress(rBuf.getBuf().getData(), rBuf.getBuf().getDataLen());
+    DataBuffer buf(vespalib::roundUp2inN(rBuf.getBuf().getDataLen()));
+    CompressionConfig::Type type = compress(_net->getCompressionConfig(), toCompress, buf, false);
 
-    size_t unCompressedSize = buf.getBuf().getDataLen();
-    args.AddInt8(0);
-    args.AddInt32(buf.getBuf().getDataLen());
-    args.AddData(buf.getBuf().stealBuffer(), unCompressedSize);
+    FRT_Values &args = *req.GetParams();
+    req.SetMethodName(METHOD_NAME);
+    args.AddInt8(type);
+    args.AddInt32(toCompress.size());
+    args.AddData(buf.stealBuffer(), buf.getDataLen());
 }
 
 namespace {
@@ -232,13 +234,15 @@ RPCSendV2::createResponse(FRT_Values & ret, const string & version, Reply & repl
         }
     }
 
-    OutputBuf buf(8192);
-    BinaryFormat::encode(slime, buf);
+    OutputBuf rBuf(8192);
+    BinaryFormat::encode(slime, rBuf);
+    ConstBufferRef toCompress(rBuf.getBuf().getData(), rBuf.getBuf().getDataLen());
+    DataBuffer buf(vespalib::roundUp2inN(rBuf.getBuf().getDataLen()));
+    CompressionConfig::Type type = compress(_net->getCompressionConfig(), toCompress, buf, false);
 
-    size_t unCompressedSize = buf.getBuf().getDataLen();
-    ret.AddInt8(0);
-    ret.AddInt32(buf.getBuf().getDataLen());
-    ret.AddData(buf.getBuf().stealBuffer(), unCompressedSize);
+    ret.AddInt8(type);
+    ret.AddInt32(toCompress.size());
+    ret.AddData(buf.stealBuffer(), buf.getDataLen());
 }
 
 } // namespace mbus

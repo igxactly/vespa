@@ -21,8 +21,8 @@
 #include <vespa/storageserver/app/distributorprocess.h>
 #include <vespa/storageserver/app/memfileservicelayerprocess.h>
 #include <vespa/vespalib/util/exceptions.h>
+#include <vespa/fnet/frt/supervisor.h>
 #include <sys/time.h>
-#include <fstream>
 
 #include <vespa/log/log.h>
 LOG_SETUP(".storageservertest");

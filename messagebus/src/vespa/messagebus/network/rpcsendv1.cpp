@@ -6,6 +6,7 @@
 #include <vespa/messagebus/emptyreply.h>
 #include <vespa/messagebus/tracelevel.h>
 #include <vespa/vespalib/util/stringfmt.h>
+#include <vespa/fnet/frt/reflection.h>
 
 using vespalib::make_string;
 

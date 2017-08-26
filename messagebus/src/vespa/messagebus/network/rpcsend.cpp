@@ -9,6 +9,8 @@
 #include <vespa/messagebus/errorcode.h>
 #include <vespa/vespalib/util/stringfmt.h>
 #include <vespa/fnet/channel.h>
+#include <vespa/fnet/frt/reflection.h>
+
 #include <vespa/vespalib/data/slime/cursor.h>
 
 using vespalib::make_string;
@@ -271,7 +273,7 @@ RPCSend::invoke(FRT_RPCRequest *req)
     if (msg->getTrace().shouldTrace(TraceLevel::SEND_RECEIVE)) {
         msg->getTrace().trace(TraceLevel::SEND_RECEIVE,
                               make_string("Message (type %d) received at %s for session '%s'.",
-                                          msg->getType(), _serverIdent.c_str(), params->getSession().c_str()));
+                                          msg->getType(), _serverIdent.c_str(), string(params->getSession()).c_str()));
     }
     _net->getOwner().deliverMessage(std::move(msg), params->getSession());
 }

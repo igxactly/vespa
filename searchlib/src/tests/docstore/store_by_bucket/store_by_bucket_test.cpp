@@ -4,12 +4,12 @@
 
 #include <vespa/document/bucket/bucketid.h>
 #include <vespa/document/base/documentid.h>
-#include <vespa/log/log.h>
 #include <vespa/searchlib/docstore/storebybucket.h>
 #include <vespa/vespalib/stllike/asciistream.h>
 #include <vespa/vespalib/stllike/hash_set.h>
 #include <vespa/vespalib/util/threadstackexecutor.h>
 
+#include <vespa/log/log.h>
 LOG_SETUP("store_by_bucket_test");
 
 using namespace search::docstore;

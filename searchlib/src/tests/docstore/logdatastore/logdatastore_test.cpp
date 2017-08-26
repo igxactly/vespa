@@ -15,7 +15,6 @@
 #include <vespa/vespalib/util/exceptions.h>
 #include <vespa/vespalib/util/threadstackexecutor.h>
 #include <iomanip>
-#include <iostream>
 
 using document::BucketId;
 using namespace search::docstore;

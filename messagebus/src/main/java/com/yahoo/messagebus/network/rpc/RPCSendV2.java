@@ -1,6 +1,8 @@
 package com.yahoo.messagebus.network.rpc;
 
 import com.yahoo.component.Version;
+import com.yahoo.compress.CompressionType;
+import com.yahoo.compress.Compressor;
 import com.yahoo.jrt.DataValue;
 import com.yahoo.jrt.DoubleValue;
 import com.yahoo.jrt.Int32Array;
@@ -19,6 +21,11 @@ import com.yahoo.messagebus.Reply;
 import com.yahoo.messagebus.Trace;
 import com.yahoo.messagebus.TraceNode;
 import com.yahoo.messagebus.routing.Route;
+import com.yahoo.slime.BinaryFormat;
+import com.yahoo.slime.Cursor;
+import com.yahoo.slime.Inspector;
+import com.yahoo.slime.Slime;
+import com.yahoo.text.Utf8;
 import com.yahoo.text.Utf8Array;
 
 /**
@@ -28,9 +35,10 @@ import com.yahoo.text.Utf8Array;
  */
 public class RPCSendV2 extends RPCSend {
 
-    private final String METHOD_NAME = "mbus.slime";
-    private final String METHOD_PARAMS = "sssbilsxi";
-    private final String METHOD_RETURN = "sdISSsxs";
+    private final static String METHOD_NAME = "mbus.slime";
+    private final static String METHOD_PARAMS = "bix";
+    private final static String METHOD_RETURN = "sdISSsxs";
+    private final Compressor compressor = new Compressor(CompressionType.LZ4, 3, 90, 1024);
 
     @Override
     protected String getReturnSpec() { return METHOD_RETURN; }
@@ -39,15 +47,9 @@ public class RPCSendV2 extends RPCSend {
 
         Method method = new Method(METHOD_NAME, METHOD_PARAMS, METHOD_RETURN, this);
         method.methodDesc("Send a message bus request and get a reply back.");
-        method.paramDesc(0, "version", "The version of the message.")
-                .paramDesc(1, "route", "Names of additional hops to visit.")
-                .paramDesc(2, "session", "The local session that should receive this message.")
-                .paramDesc(3, "retryEnabled", "Whether or not this message can be resent.")
-                .paramDesc(4, "retry", "The number of times the sending of this message has been retried.")
-                .paramDesc(5, "timeRemaining", "The number of milliseconds until timeout.")
-                .paramDesc(6, "protocol", "The name of the protocol that knows how to decode this message.")
-                .paramDesc(7, "payload", "The protocol specific message payload.")
-                .paramDesc(8, "level", "The trace level of the message.");
+        method.paramDesc(0, "encoding", "Encoding type.")
+                .paramDesc(1, "decodedSize", "Number of bytes after decoding.")
+                .paramDesc(2, "payload", "Slime encoded payload.");
         method.returnDesc(0, "version", "The lowest version the message was serialized as.")
                 .returnDesc(1, "retryDelay", "The retry request of the reply.")
                 .returnDesc(2, "errorCodes", "The reply error codes.")
@@ -58,20 +60,43 @@ public class RPCSendV2 extends RPCSend {
                 .returnDesc(7, "trace", "A string representation of the trace.");
         return method;
     }
+    private static final String VERSION_F = new String("version");
+    private static final String ROUTE_F = new String("route");
+    private static final String SESSION_F = new String("session");
+    private static final String PROTOCOL_F = new String("prot");
+    private static final String TRACELEVEL_F = new String("tracelevel");
+    private static final String USERETRY_F = new String("useretry");
+    private static final String RETRY_F = new String("retry");
+    private static final String TIMEREMAINING_F = new String("timeleft");
+    private static final String BLOB_F = new String("msg");
+
+
+
     @Override
     protected Request encodeRequest(Version version, Route route, RPCServiceAddress address, Message msg,
                                     long timeRemaining, byte[] payload, int traceLevel) {
+        Slime slime = new Slime();
+        Cursor root = slime.setObject();
+
+        root.setString(VERSION_F, version.toString());
+        root.setString(ROUTE_F, route.toString());
+        root.setString(SESSION_F, address.getSessionName());
+        root.setString(PROTOCOL_F, msg.getProtocol().toString());
+        root.setBool(USERETRY_F, msg.getRetryEnabled());
+        root.setLong(RETRY_F, msg.getRetry());
+        root.setLong(TIMEREMAINING_F, msg.getTimeRemaining());
+        root.setLong(TRACELEVEL_F, traceLevel);
+        root.setData(BLOB_F, payload);
+
+        byte[] serializedSlime = BinaryFormat.encode(slime);
+        Compressor.Compression compressionResult = compressor.compress(serializedSlime);
         Request req = new Request(METHOD_NAME);
         Values v = req.parameters();
-        v.add(new StringValue(version.toString()));
-        v.add(new StringValue(route.toString()));
-        v.add(new StringValue(address.getSessionName()));
-        v.add(new Int8Value(msg.getRetryEnabled() ? (byte)1 : (byte)0));
-        v.add(new Int32Value(msg.getRetry()));
-        v.add(new Int64Value(timeRemaining));
-        v.add(new StringValue(msg.getProtocol()));
-        v.add(new DataValue(payload));
-        v.add(new Int32Value(traceLevel));
+
+        v.add(new Int8Value(compressionResult.type().getCode()));
+        v.add(new Int32Value(compressionResult.uncompressedSize()));
+        v.add(new DataValue(compressionResult.data()));
+
         return req;
     }
 
@@ -115,17 +140,21 @@ public class RPCSendV2 extends RPCSend {
         return reply;
     }
 
-    protected Params toParams(Request req) {
+    protected Params toParams(Values args) {
+        CompressionType compression = CompressionType.valueOf(args.get(0).asInt8());
+        byte[] slimeBytes = compressor.decompress(args.get(2).asData(), compression, args.get(1).asInt32());
+        Slime slime = BinaryFormat.decode(slimeBytes);
+        Inspector root = slime.get();
         Params p = new Params();
-        p.version = new Version(req.parameters().get(0).asUtf8Array());
-        p.route = req.parameters().get(1).asString();
-        p.session = req.parameters().get(2).asString();
-        p.retryEnabled = (req.parameters().get(3).asInt8() != 0);
-        p.retry = req.parameters().get(4).asInt32();
-        p.timeRemaining = req.parameters().get(5).asInt64();
-        p.protocolName = req.parameters().get(6).asUtf8Array();
-        p.payload = req.parameters().get(7).asData();
-        p.traceLevel = req.parameters().get(8).asInt32();
+        p.version = new Version(root.field(VERSION_F).asString());
+        p.route = root.field(ROUTE_F).asString();
+        p.session = root.field(SESSION_F).asString();
+        p.retryEnabled = root.field(USERETRY_F).asBool();
+        p.retry = (int)root.field(RETRY_F).asLong();
+        p.timeRemaining = root.field(TIMEREMAINING_F).asLong();
+        p.protocolName = new Utf8Array(Utf8.toBytes(root.field(PROTOCOL_F).asString()));
+        p.payload = root.field(BLOB_F).asData();
+        p.traceLevel = (int)root.field(TRACELEVEL_F).asLong();
         return p;
     }
 

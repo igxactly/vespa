@@ -116,17 +116,17 @@ public class RPCSendV1 extends RPCSend {
         return reply;
     }
 
-    protected Params toParams(Request req) {
+    protected Params toParams(Values args) {
         Params p = new Params();
-        p.version = new Version(req.parameters().get(0).asUtf8Array());
-        p.route = req.parameters().get(1).asString();
-        p.session = req.parameters().get(2).asString();
-        p.retryEnabled = (req.parameters().get(3).asInt8() != 0);
-        p.retry = req.parameters().get(4).asInt32();
-        p.timeRemaining = req.parameters().get(5).asInt64();
-        p.protocolName = req.parameters().get(6).asUtf8Array();
-        p.payload = req.parameters().get(7).asData();
-        p.traceLevel = req.parameters().get(8).asInt32();
+        p.version = new Version(args.get(0).asUtf8Array());
+        p.route = args.get(1).asString();
+        p.session = args.get(2).asString();
+        p.retryEnabled = (args.get(3).asInt8() != 0);
+        p.retry = args.get(4).asInt32();
+        p.timeRemaining = args.get(5).asInt64();
+        p.protocolName = args.get(6).asUtf8Array();
+        p.payload = args.get(7).asData();
+        p.traceLevel = args.get(8).asInt32();
         return p;
     }
 

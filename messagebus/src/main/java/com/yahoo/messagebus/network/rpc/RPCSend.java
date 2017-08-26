@@ -33,7 +33,7 @@ public abstract class RPCSend implements MethodHandler, ReplyHandler, RequestWai
     protected abstract Request encodeRequest(Version version, Route route, RPCServiceAddress address, Message msg,
                                              long timeRemaining, byte[] payload, int traceLevel);
     protected abstract Reply createReply(Request req, String serviceName, Trace trace);
-    protected abstract Params toParams(Request req);
+    protected abstract Params toParams(Values req);
     protected abstract void createReponse(Values ret, Reply reply, Version version, byte [] payload);
     @Override
     public void attach(RPCNetwork net) {
@@ -151,7 +151,7 @@ public abstract class RPCSend implements MethodHandler, ReplyHandler, RequestWai
     @Override
     public void invoke(Request request) {
         request.detach();
-        Params p = toParams(request);
+        Params p = toParams(request.parameters());
 
         request.discardParameters(); // allow garbage collection of request parameters
 

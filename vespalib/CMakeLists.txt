@@ -23,6 +23,7 @@ vespa_define_module(
     src/tests/closure
     src/tests/component
     src/tests/compress
+    src/tests/data/databuffer
     src/tests/data/input_reader
     src/tests/data/lz4_encode_decode
     src/tests/data/memory_input

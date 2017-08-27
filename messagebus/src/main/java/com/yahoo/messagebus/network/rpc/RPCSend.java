@@ -42,7 +42,7 @@ public abstract class RPCSend implements MethodHandler, ReplyHandler, RequestWai
     protected abstract Params toParams(Values req);
     protected abstract void createReponse(Values ret, Reply reply, Version version, byte [] payload);
     @Override
-    public void attach(RPCNetwork net) {
+    public final void attach(RPCNetwork net) {
         this.net = net;
         String prefix = net.getIdentity().getServicePrefix();
         if (prefix != null && prefix.length() > 0) {
@@ -53,7 +53,7 @@ public abstract class RPCSend implements MethodHandler, ReplyHandler, RequestWai
     }
 
     @Override
-    public void send(RoutingNode recipient, Version version, byte[] payload, long timeRemaining) {
+    public final void send(RoutingNode recipient, Version version, byte[] payload, long timeRemaining) {
         SendContext ctx = new SendContext(recipient, timeRemaining);
         RPCServiceAddress address = (RPCServiceAddress)recipient.getServiceAddress();
         Message msg = recipient.getMessage();
@@ -106,7 +106,7 @@ public abstract class RPCSend implements MethodHandler, ReplyHandler, RequestWai
     }
 
     @Override
-    public void handleRequestDone(Request req) {
+    public final void handleRequestDone(Request req) {
         SendContext ctx = (SendContext)req.getContext();
         String serviceName = ((RPCServiceAddress)ctx.recipient.getServiceAddress()).getServiceName();
         Reply reply = null;
@@ -142,7 +142,7 @@ public abstract class RPCSend implements MethodHandler, ReplyHandler, RequestWai
         net.getOwner().deliverReply(reply, ctx.recipient);
     }
 
-    protected class Params {
+    protected final class Params {
         Version version;
         String route;
         String session;
@@ -155,7 +155,7 @@ public abstract class RPCSend implements MethodHandler, ReplyHandler, RequestWai
     }
 
     @Override
-    public void invoke(Request request) {
+    public final void invoke(Request request) {
         request.detach();
         Params p = toParams(request.parameters());
 
@@ -201,7 +201,7 @@ public abstract class RPCSend implements MethodHandler, ReplyHandler, RequestWai
     }
 
     @Override
-    public void handleReply(Reply reply) {
+    public final void handleReply(Reply reply) {
         ReplyContext ctx = (ReplyContext)reply.getContext();
         reply.setContext(null);
 

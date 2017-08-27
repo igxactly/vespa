@@ -162,10 +162,12 @@ public class RPCNetwork implements Network, MethodHandler {
         }
         this.owner = owner;
 
-        RPCSendAdapter adapter1 = new RPCSendV2();
+        RPCSendAdapter adapter1 = new RPCSendV1();
         RPCSendAdapter adapter2 = new RPCSendV2();
         addSendAdapter(new VersionSpecification(5), adapter1);
-        addSendAdapter(new VersionSpecification(6), adapter2);
+        addSendAdapter(new VersionSpecification(6), adapter1);
+        addSendAdapter(new VersionSpecification(6,150), adapter2);
+        addSendAdapter(new VersionSpecification(7), adapter2);
     }
 
     @Override

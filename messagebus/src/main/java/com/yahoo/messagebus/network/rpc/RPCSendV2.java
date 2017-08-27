@@ -67,11 +67,6 @@ public class RPCSendV2 extends RPCSend {
     private static final String BLOB_F = new String("msg");
     private static final String MSG_F = new String("msg");
 
-
-
-
-
-
     @Override
     protected Request encodeRequest(Version version, Route route, RPCServiceAddress address, Message msg,
                                     long timeRemaining, byte[] payload, int traceLevel) {

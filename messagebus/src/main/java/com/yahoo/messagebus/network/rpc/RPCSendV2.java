@@ -1,18 +1,14 @@
+// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.messagebus.network.rpc;
 
 import com.yahoo.component.Version;
 import com.yahoo.compress.CompressionType;
 import com.yahoo.compress.Compressor;
 import com.yahoo.jrt.DataValue;
-import com.yahoo.jrt.DoubleValue;
-import com.yahoo.jrt.Int32Array;
 import com.yahoo.jrt.Int32Value;
-import com.yahoo.jrt.Int64Value;
 import com.yahoo.jrt.Int8Value;
 import com.yahoo.jrt.Method;
 import com.yahoo.jrt.Request;
-import com.yahoo.jrt.StringArray;
-import com.yahoo.jrt.StringValue;
 import com.yahoo.jrt.Values;
 import com.yahoo.messagebus.EmptyReply;
 import com.yahoo.messagebus.Error;
@@ -29,15 +25,15 @@ import com.yahoo.text.Utf8;
 import com.yahoo.text.Utf8Array;
 
 /**
- * Implements the request adapter for method "mbus.send1".
+ * Implements the request adapter for method "mbus.sendslime".
  *
- * @author <a href="mailto:simon@yahoo-inc.com">Simon Thoresen</a>
+ * @author baldersheim
  */
 public class RPCSendV2 extends RPCSend {
 
     private final static String METHOD_NAME = "mbus.slime";
     private final static String METHOD_PARAMS = "bix";
-    private final static String METHOD_RETURN = "sdISSsxs";
+    private final static String METHOD_RETURN = "bix";
     private final Compressor compressor = new Compressor(CompressionType.LZ4, 3, 90, 1024);
 
     @Override
@@ -50,14 +46,9 @@ public class RPCSendV2 extends RPCSend {
         method.paramDesc(0, "encoding", "Encoding type.")
                 .paramDesc(1, "decodedSize", "Number of bytes after decoding.")
                 .paramDesc(2, "payload", "Slime encoded payload.");
-        method.returnDesc(0, "version", "The lowest version the message was serialized as.")
-                .returnDesc(1, "retryDelay", "The retry request of the reply.")
-                .returnDesc(2, "errorCodes", "The reply error codes.")
-                .returnDesc(3, "errorMessages", "The reply error messages.")
-                .returnDesc(4, "errorServices", "The reply error service names.")
-                .returnDesc(5, "protocol", "The name of the protocol that knows how to decode this reply.")
-                .returnDesc(6, "payload", "The protocol specific reply payload.")
-                .returnDesc(7, "trace", "A string representation of the trace.");
+        method.returnDesc(0, "encoding", "Encoding type.")
+                .returnDesc(1, "decodedSize", "Number of bytes after decoding.")
+                .returnDesc(2, "payload", "Slime encoded payload.");
         return method;
     }
     private static final String VERSION_F = new String("version");
@@ -65,10 +56,19 @@ public class RPCSendV2 extends RPCSend {
     private static final String SESSION_F = new String("session");
     private static final String PROTOCOL_F = new String("prot");
     private static final String TRACELEVEL_F = new String("tracelevel");
+    private static final String TRACE_F = new String("trace");
     private static final String USERETRY_F = new String("useretry");
     private static final String RETRY_F = new String("retry");
+    private static final String RETRYDELAY_F = new String("retrydelay");
     private static final String TIMEREMAINING_F = new String("timeleft");
+    private static final String ERRORS_F = new String("errors");
+    private static final String SERVICE_F = new String("service");
+    private static final String CODE_F = new String("code");
     private static final String BLOB_F = new String("msg");
+    private static final String MSG_F = new String("msg");
+
+
+
 
 
 
@@ -101,26 +101,24 @@ public class RPCSendV2 extends RPCSend {
     }
 
     @Override
-    protected Reply createReply(Request req, String serviceName, Trace trace) {
-        // Retrieve all reply components from JRT request object.
-        Version version = new Version(req.returnValues().get(0).asUtf8Array());
-        double retryDelay = req.returnValues().get(1).asDouble();
-        int[] errorCodes = req.returnValues().get(2).asInt32Array();
-        String[] errorMessages = req.returnValues().get(3).asStringArray();
-        String[] errorServices = req.returnValues().get(4).asStringArray();
-        Utf8Array protocolName = req.returnValues().get(5).asUtf8Array();
-        byte[] payload = req.returnValues().get(6).asData();
-        String replyTrace = req.returnValues().get(7).asString();
+    protected Reply createReply(Values ret, String serviceName, Trace trace) {
+        CompressionType compression = CompressionType.valueOf(ret.get(0).asInt8());
+        byte[] slimeBytes = compressor.decompress(ret.get(2).asData(), compression, ret.get(1).asInt32());
+        Slime slime = BinaryFormat.decode(slimeBytes);
+        Inspector root = slime.get();
+
+        Version version = new Version(root.field(VERSION_F).asString());
+        byte[] payload = root.field(BLOB_F).asData();
 
         // Make sure that the owner understands the protocol.
         Reply reply = null;
         Error error = null;
         if (payload.length > 0) {
-            Object ret = decode(protocolName, version, payload);
-            if (ret instanceof Reply) {
-                reply = (Reply) ret;
+            Object retval = decode(new Utf8Array(root.field(PROTOCOL_F).asUtf8()), version, payload);
+            if (retval instanceof Reply) {
+                reply = (Reply) retval;
             } else {
-                error = (Error) ret;
+                error = (Error) retval;
             }
         }
         if (reply == null) {
@@ -129,13 +127,17 @@ public class RPCSendV2 extends RPCSend {
         if (error != null) {
             reply.addError(error);
         }
-        reply.setRetryDelay(retryDelay);
-        for (int i = 0; i < errorCodes.length && i < errorMessages.length; i++) {
-            reply.addError(new Error(errorCodes[i], errorMessages[i],
-                    errorServices[i].length() > 0 ? errorServices[i] : serviceName));
+        reply.setRetryDelay(root.field(RETRYDELAY_F).asDouble());
+
+        Inspector errors = root.field(ERRORS_F);
+        for (int i = 0; i < errors.entries(); i++) {
+            Inspector e = errors.entry(i);
+            String service = e.field(SERVICE_F).asString();
+            reply.addError(new Error((int)e.field(CODE_F).asLong(), e.field(MSG_F).asString(),
+                    (service != null && service.length() > 0) ? service : serviceName));
         }
         if (trace.getLevel() > 0) {
-            trace.getRoot().addChild(TraceNode.decode(replyTrace));
+            trace.getRoot().addChild(TraceNode.decode(root.field(TRACE_F).asString()));
         }
         return reply;
     }
@@ -160,23 +162,36 @@ public class RPCSendV2 extends RPCSend {
 
     @Override
     protected void createReponse(Values ret, Reply reply, Version version, byte [] payload) {
-        int[] eCodes = new int[reply.getNumErrors()];
-        String[] eMessages = new String[reply.getNumErrors()];
-        String[] eServices = new String[reply.getNumErrors()];
-        for (int i = 0; i < reply.getNumErrors(); ++i) {
-            Error error = reply.getError(i);
-            eCodes[i] = error.getCode();
-            eMessages[i] = error.getMessage();
-            eServices[i] = error.getService() != null ? error.getService() : "";
+        Slime slime = new Slime();
+        Cursor root = slime.setObject();
+
+        root.setString(VERSION_F, version.toString());
+        root.setDouble(RETRYDELAY_F, reply.getRetryDelay());
+        root.setString(PROTOCOL_F, reply.getProtocol().toString());
+        root.setData(BLOB_F, payload);
+        if (reply.getTrace().getLevel() > 0) {
+            root.setString(TRACE_F, reply.getTrace().getRoot().encode());
         }
-        ret.add(new StringValue(version.toString()));
-        ret.add(new DoubleValue(reply.getRetryDelay()));
-        ret.add(new Int32Array(eCodes));
-        ret.add(new StringArray(eMessages));
-        ret.add(new StringArray(eServices));
-        ret.add(new StringValue(reply.getProtocol()));
-        ret.add(new DataValue(payload));
-        ret.add(new StringValue(reply.getTrace().getRoot() != null ? reply.getTrace().getRoot().encode() : ""));
+
+        if (reply.getNumErrors() > 0) {
+            Cursor array = root.setArray(ERRORS_F);
+            for (int i = 0; i < reply.getNumErrors(); i++) {
+                Cursor e = array.addObject();
+                Error mbusE = reply.getError(i);
+                e.setLong(CODE_F, mbusE.getCode());
+                e.setString(MSG_F, mbusE.getMessage());
+                if (mbusE.getService() != null) {
+                    e.setString(SERVICE_F, mbusE.getService());
+                }
+            }
+        }
+
+        byte[] serializedSlime = BinaryFormat.encode(slime);
+        Compressor.Compression compressionResult = compressor.compress(serializedSlime);
+
+        ret.add(new Int8Value(compressionResult.type().getCode()));
+        ret.add(new Int32Value(compressionResult.uncompressedSize()));
+        ret.add(new DataValue(compressionResult.data()));
     }
 
 }

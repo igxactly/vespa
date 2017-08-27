@@ -1,3 +1,4 @@
+// Copyright 2017 Yahoo Holdings. Licensed under the terms of the Apache 2.0 license. See LICENSE in the project root.
 package com.yahoo.messagebus.network.rpc;
 
 import com.yahoo.component.Version;
@@ -22,6 +23,11 @@ import com.yahoo.messagebus.routing.Route;
 import com.yahoo.messagebus.routing.RoutingNode;
 import com.yahoo.text.Utf8Array;
 
+/**
+ * Implements the request adapter for method "mbus.send1/mbus.slime".
+ *
+ * @author baldersheim
+ */
 public abstract class RPCSend implements MethodHandler, ReplyHandler, RequestWaiter, RPCSendAdapter {
 
     private RPCNetwork net = null;
@@ -32,7 +38,7 @@ public abstract class RPCSend implements MethodHandler, ReplyHandler, RequestWai
     protected abstract String getReturnSpec();
     protected abstract Request encodeRequest(Version version, Route route, RPCServiceAddress address, Message msg,
                                              long timeRemaining, byte[] payload, int traceLevel);
-    protected abstract Reply createReply(Request req, String serviceName, Trace trace);
+    protected abstract Reply createReply(Values ret, String serviceName, Trace trace);
     protected abstract Params toParams(Values req);
     protected abstract void createReponse(Values ret, Reply reply, Version version, byte [] payload);
     @Override
@@ -123,7 +129,7 @@ public abstract class RPCSend implements MethodHandler, ReplyHandler, RequestWai
                             "A network error occured for '" + serviceName + "'; " + req.errorMessage());
             }
         } else {
-            reply = createReply(req, serviceName, ctx.trace);
+            reply = createReply(req.returnValues(), serviceName, ctx.trace);
         }
         if (ctx.trace.shouldTrace(TraceLevel.SEND_RECEIVE)) {
             ctx.trace.trace(TraceLevel.SEND_RECEIVE,

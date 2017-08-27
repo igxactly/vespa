@@ -77,26 +77,25 @@ public class RPCSendV1 extends RPCSend {
     }
 
     @Override
-    protected Reply createReply(Request req, String serviceName, Trace trace) {
-        // Retrieve all reply components from JRT request object.
-        Version version = new Version(req.returnValues().get(0).asUtf8Array());
-        double retryDelay = req.returnValues().get(1).asDouble();
-        int[] errorCodes = req.returnValues().get(2).asInt32Array();
-        String[] errorMessages = req.returnValues().get(3).asStringArray();
-        String[] errorServices = req.returnValues().get(4).asStringArray();
-        Utf8Array protocolName = req.returnValues().get(5).asUtf8Array();
-        byte[] payload = req.returnValues().get(6).asData();
-        String replyTrace = req.returnValues().get(7).asString();
+    protected Reply createReply(Values ret, String serviceName, Trace trace) {
+        Version version = new Version(ret.get(0).asUtf8Array());
+        double retryDelay = ret.get(1).asDouble();
+        int[] errorCodes = ret.get(2).asInt32Array();
+        String[] errorMessages = ret.get(3).asStringArray();
+        String[] errorServices = ret.get(4).asStringArray();
+        Utf8Array protocolName = ret.get(5).asUtf8Array();
+        byte[] payload = ret.get(6).asData();
+        String replyTrace = ret.get(7).asString();
 
         // Make sure that the owner understands the protocol.
         Reply reply = null;
         Error error = null;
         if (payload.length > 0) {
-            Object ret = decode(protocolName, version, payload);
-            if (ret instanceof Reply) {
-                reply = (Reply) ret;
+            Object retval = decode(protocolName, version, payload);
+            if (retval instanceof Reply) {
+                reply = (Reply) retval;
             } else {
-                error = (Error) ret;
+                error = (Error) retval;
             }
         }
         if (reply == null) {

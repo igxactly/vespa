@@ -44,7 +44,7 @@ public class RPCNetwork implements Network, MethodHandler {
     private final Acceptor listener;
     private final Mirror mirror;
     private final Register register;
-    private final Map<VersionSpecification, RPCSendAdapter> sendAdapters = new HashMap<>();
+    private final TreeMap<Version, RPCSendAdapter> sendAdapters = new TreeMap<>();
     private NetworkOwner owner;
     private final SlobrokConfigSubscriber slobroksConfig;
     private final LinkedHashMap<String, Route> lruRouteMap = new LinkedHashMap<>(10000, 0.5f, true);
@@ -164,10 +164,9 @@ public class RPCNetwork implements Network, MethodHandler {
 
         RPCSendAdapter adapter1 = new RPCSendV1();
         RPCSendAdapter adapter2 = new RPCSendV2();
-        addSendAdapter(new VersionSpecification(5), adapter1);
-        addSendAdapter(new VersionSpecification(6), adapter1);
-        addSendAdapter(new VersionSpecification(6,150), adapter2);
-        addSendAdapter(new VersionSpecification(7), adapter2);
+        addSendAdapter(new Version(5), adapter1);
+        addSendAdapter(new Version(6), adapter1);
+        addSendAdapter(new Version(6,142), adapter2);
     }
 
     @Override
@@ -318,7 +317,7 @@ public class RPCNetwork implements Network, MethodHandler {
      * @param version The version for which to register an adapter.
      * @param adapter The adapter to register.
      */
-    private void addSendAdapter(VersionSpecification version, RPCSendAdapter adapter) {
+    private void addSendAdapter(Version version, RPCSendAdapter adapter) {
         adapter.attach(this);
         sendAdapters.put(version, adapter);
     }
@@ -331,12 +330,8 @@ public class RPCNetwork implements Network, MethodHandler {
      * @return The compatible adapter.
      */
     private RPCSendAdapter getSendAdapter(Version version) {
-        for (Map.Entry<VersionSpecification, RPCSendAdapter> entry : sendAdapters.entrySet()) {
-            if (entry.getKey().matches(version)) {
-                return entry.getValue();
-            }
-        }
-        return null;
+        Map.Entry<Version, RPCSendAdapter> lower = sendAdapters.lowerEntry(version);
+        return lower.getValue();
     }
 
     /**

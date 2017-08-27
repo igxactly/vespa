@@ -43,7 +43,6 @@ Memory TRACELEVEL_F("tracelevel");
 Memory TRACE_F("trace");
 Memory BLOB_F("msg");
 Memory ERRORS_F("errors");
-Memory ERROR_F("error");
 Memory CODE_F("code");
 Memory MSG_F("msg");
 Memory SERVICE_F("service");

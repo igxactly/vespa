@@ -2,17 +2,28 @@
 package com.yahoo.messagebus.network.rpc;
 
 import com.yahoo.component.Version;
-import com.yahoo.component.VersionSpecification;
 import com.yahoo.component.Vtag;
 import com.yahoo.concurrent.ThreadFactoryFactory;
-import com.yahoo.jrt.*;
+import com.yahoo.jrt.Acceptor;
+import com.yahoo.jrt.ListenFailedException;
+import com.yahoo.jrt.Method;
+import com.yahoo.jrt.MethodHandler;
+import com.yahoo.jrt.Request;
+import com.yahoo.jrt.Spec;
+import com.yahoo.jrt.StringValue;
+import com.yahoo.jrt.Supervisor;
+import com.yahoo.jrt.Task;
+import com.yahoo.jrt.Transport;
 import com.yahoo.jrt.slobrok.api.IMirror;
 import com.yahoo.jrt.slobrok.api.Mirror;
 import com.yahoo.jrt.slobrok.api.Register;
 import com.yahoo.log.LogLevel;
-import com.yahoo.messagebus.*;
+import com.yahoo.messagebus.EmptyReply;
 import com.yahoo.messagebus.Error;
 import com.yahoo.messagebus.ErrorCode;
+import com.yahoo.messagebus.Message;
+import com.yahoo.messagebus.Protocol;
+import com.yahoo.messagebus.Reply;
 import com.yahoo.messagebus.network.Identity;
 import com.yahoo.messagebus.network.Network;
 import com.yahoo.messagebus.network.NetworkOwner;
@@ -22,8 +33,16 @@ import com.yahoo.messagebus.routing.RoutingNode;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 
@@ -235,11 +254,9 @@ public class RPCNetwork implements Network, MethodHandler {
      */
     private void send(SendContext ctx) {
         if (destroyed.get()) {
-            replyError(ctx, ErrorCode.NETWORK_SHUTDOWN,
-                       "Network layer has performed shutdown.");
+            replyError(ctx, ErrorCode.NETWORK_SHUTDOWN, "Network layer has performed shutdown.");
         } else if (ctx.hasError) {
-            replyError(ctx, ErrorCode.HANDSHAKE_FAILED,
-                       "An error occured while resolving version.");
+            replyError(ctx, ErrorCode.HANDSHAKE_FAILED, "An error occured while resolving version.");
         } else {
             sendService.execute(new SendTask(owner.getProtocol(ctx.msg.getProtocol()), ctx));
         }
@@ -329,8 +346,8 @@ public class RPCNetwork implements Network, MethodHandler {
      * @return The compatible adapter.
      */
     private RPCSendAdapter getSendAdapter(Version version) {
-        Map.Entry<Version, RPCSendAdapter> lower = sendAdapters.lowerEntry(version);
-        return lower.getValue();
+        Map.Entry<Version, RPCSendAdapter> lower = sendAdapters.floorEntry(version);
+        return (lower != null) ? lower.getValue() : null;
     }
 
     /**

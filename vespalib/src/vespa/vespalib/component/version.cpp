@@ -7,7 +7,6 @@
 
 namespace vespalib {
 
-
 Version::Version(int major, int minor, int micro, const string & qualifier)
     : _major(major),
       _minor(minor),

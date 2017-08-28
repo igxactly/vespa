@@ -58,7 +58,7 @@ private:
         void PerformTask() override;
     };
 
-    using SendAdapterMap = std::map<vespalib::VersionSpecification, RPCSendAdapter*>;
+    using SendAdapterMap = std::map<vespalib::Version, RPCSendAdapter*>;
 
     INetworkOwner            *_owner;
     Identity                  _ident;

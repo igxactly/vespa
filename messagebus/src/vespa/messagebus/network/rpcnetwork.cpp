@@ -180,10 +180,8 @@ RPCNetwork::attach(INetworkOwner &owner)
 
     _sendV1->attach(*this);
     _sendV2->attach(*this);
-    _sendAdapters.insert(SendAdapterMap::value_type(vespalib::VersionSpecification(5), _sendV1.get()));
-    _sendAdapters.insert(SendAdapterMap::value_type(vespalib::VersionSpecification(6), _sendV1.get()));
-    _sendAdapters.insert(SendAdapterMap::value_type(vespalib::VersionSpecification(6, 150), _sendV2.get()));
-    _sendAdapters.insert(SendAdapterMap::value_type(vespalib::VersionSpecification(7), _sendV2.get()));
+    _sendAdapters[vespalib::Version(5)] = _sendV1.get();
+    _sendAdapters[vespalib::Version(6, 142)] = _sendV2.get();
 
     FRT_ReflectionBuilder builder(_orb.get());
     builder.DefineMethod("mbus.getVersion", "", "s", true, FRT_METHOD(RPCNetwork::invoke), this);
@@ -206,12 +204,8 @@ RPCNetwork::getConnectionSpec() const
 RPCSendAdapter *
 RPCNetwork::getSendAdapter(const vespalib::Version &version)
 {
-    for (const auto & entry : _sendAdapters) {
-        if (entry.first.matches(version)) {
-            return entry.second;
-        }
-    }
-    return NULL;
+    auto lower = _sendAdapters.lower_bound(version);
+    return (lower != _sendAdapters.end()) ? lower->second : nullptr;
 }
 
 bool

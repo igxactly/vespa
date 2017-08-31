@@ -4,9 +4,9 @@ package com.yahoo.document.predicate;
 import com.yahoo.document.predicate.parser.PredicateLexer;
 import com.yahoo.document.predicate.parser.PredicateParser;
 import com.yahoo.text.Ascii;
-import org.antlr.runtime.ANTLRStringStream;
-import org.antlr.runtime.CommonTokenStream;
-import org.antlr.runtime.RecognitionException;
+import org.antlr.v4.runtime.ANTLRInputStream;
+import org.antlr.v4.runtime.CommonTokenStream;
+import org.antlr.v4.runtime.RecognitionException;
 
 import java.nio.charset.StandardCharsets;
 
@@ -65,7 +65,7 @@ public abstract class Predicate implements Cloneable {
     }
 
     public static Predicate fromString(String str) {
-        ANTLRStringStream input = new ANTLRStringStream(str);
+        ANTLRInputStream input = new ANTLRInputStream(str);
         PredicateLexer lexer = new PredicateLexer(input);
         CommonTokenStream tokens = new CommonTokenStream(lexer);
         PredicateParser parser = new PredicateParser(tokens);

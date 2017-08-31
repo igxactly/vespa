@@ -2,8 +2,6 @@
 grammar Predicate;
 
 @header {
-package com.yahoo.document.predicate.parser;
-
 import com.yahoo.document.predicate.Conjunction;
 import com.yahoo.document.predicate.Disjunction;
 import com.yahoo.document.predicate.FeatureRange;
